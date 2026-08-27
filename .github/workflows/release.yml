@@ -2,7 +2,8 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    tags:
+      - "v*"
   workflow_dispatch:
 
 permissions:
@@ -10,68 +11,181 @@ permissions:
 
 jobs:
   build:
+    name: Build ${{ matrix.name }}
+
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            name: linux-x86_64
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            name: linux-arm64
-          - os: ubuntu-latest
+          # iSH / Alpine x86 (32-bit)
+          - name: ish
+            os: ubuntu-latest
+            target: i686-unknown-linux-musl
+            binary: rustdl
+
+          # Alpine Linux x86_64
+          - name: alpine-x86_64
+            os: ubuntu-latest
             target: x86_64-unknown-linux-musl
-            name: linux-x86_64-musl
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-musl
-            name: linux-arm64-musl
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            name: macos-arm64
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            name: macos-x86_64
-          - os: windows-latest
+            binary: rustdl
+
+          # Windows 64-bit
+          - name: windows-x86_64
+            os: windows-latest
             target: x86_64-pc-windows-msvc
-            name: windows-x86_64
+            binary: rustdl.exe
+
     runs-on: ${{ matrix.os }}
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - name: Install musl tools
-        if: contains(matrix.target, 'musl')
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      # ------------------------------------------------------------
+      # Linux musl targets
+      # ------------------------------------------------------------
+
+      - name: Setup cross toolchain
+        if: runner.os == 'Linux'
+        uses: taiki-e/setup-cross-toolchain-action@v1
+        with:
+          target: ${{ matrix.target }}
+
+      # ------------------------------------------------------------
+      # Build
+      # ------------------------------------------------------------
+
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
-      - name: Package
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      # ------------------------------------------------------------
+      # Package
+      # ------------------------------------------------------------
+
+      - name: Package Linux
+        if: runner.os == 'Linux'
         shell: bash
         run: |
-          EXT=""
-          if [[ "${{ matrix.target }}" == *windows* ]]; then EXT=".exe"; fi
-          BIN="target/${{ matrix.target }}/release/rustdl${EXT}"
-          OUT="rustdl-${{ matrix.name }}${EXT}"
+          set -euo pipefail
+
+          BIN="target/${{ matrix.target }}/release/${{ matrix.binary }}"
+          OUT="rustdl-${{ matrix.name }}"
+
+          test -f "$BIN"
+
           cp "$BIN" "$OUT"
-          echo "ASSET=$OUT" >> $GITHUB_ENV
-      - uses: actions/upload-artifact@v4
+
+          # Remove symbols to reduce size.
+          strip "$OUT" || true
+
+          chmod +x "$OUT"
+
+          sha256sum "$OUT" > "${OUT}.sha256"
+
+          echo "ASSET=$OUT" >> "$GITHUB_ENV"
+          echo "CHECKSUM=${OUT}.sha256" >> "$GITHUB_ENV"
+
+          echo "Created:"
+          ls -lh "$OUT" "${OUT}.sha256"
+
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $bin = "target/${{ matrix.target }}/release/${{ matrix.binary }}"
+          $out = "rustdl-${{ matrix.name }}.exe"
+
+          if (!(Test-Path $bin)) {
+            throw "Binary not found: $bin"
+          }
+
+          Copy-Item $bin $out
+
+          $hash = (Get-FileHash $out -Algorithm SHA256).Hash.ToLower()
+
+          "$hash  $out" | Out-File "${out}.sha256" -Encoding ascii
+
+          "ASSET=$out" >> $env:GITHUB_ENV
+          "CHECKSUM=${out}.sha256" >> $env:GITHUB_ENV
+
+          Write-Host "Created:"
+          Get-Item $out
+          Get-Item "${out}.sha256"
+
+      # ------------------------------------------------------------
+      # Upload individual artifacts
+      # ------------------------------------------------------------
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
           name: rustdl-${{ matrix.name }}
-          path: ${{ env.ASSET }}
+          path: |
+            ${{ env.ASSET }}
+            ${{ env.CHECKSUM }}
 
-  checksums:
+  # ================================================================
+  # Release
+  # ================================================================
+
+  release:
+    name: Create GitHub Release
     needs: build
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
         with:
           path: artifacts
-      - name: SHA256SUMS
+
+      - name: Prepare release files
+        shell: bash
         run: |
-          cd artifacts
-          find . -type f -exec sha256sum {} \; | sort > ../SHA256SUMS
-          cat ../SHA256SUMS
-      - uses: actions/upload-artifact@v4
+          set -euo pipefail
+
+          mkdir -p release
+
+          find artifacts -type f -exec cp {} release/ \;
+
+          cd release
+
+          echo "Release files:"
+          ls -lh
+
+      - name: Generate SHA256SUMS
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd release
+
+          rm -f SHA256SUMS
+
+          sha256sum \
+            rustdl-ish \
+            rustdl-alpine-x86_64 \
+            rustdl-windows-x86_64.exe \
+            > SHA256SUMS
+
+          cat SHA256SUMS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: SHA256SUMS
-          path: SHA256SUMS
+          files: |
+            release/rustdl-ish
+            release/rustdl-ish.sha256
+            release/rustdl-alpine-x86_64
+            release/rustdl-alpine-x86_64.sha256
+            release/rustdl-windows-x86_64.exe
+            release/rustdl-windows-x86_64.exe.sha256
+            release/SHA256SUMS
+          generate_release_notes: true
