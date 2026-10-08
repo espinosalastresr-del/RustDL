@@ -95,7 +95,7 @@ async fn download_full_file() {
     let body: &'static [u8] = b"Hello, resilience test payload!!!";
     let server = MockServer::spawn(body, 0);
     let dir = {
-        let d = std::env::temp_dir().join(format!("rustdl-test-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("rustdl-full-file-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
@@ -139,7 +139,7 @@ async fn retries_on_503_then_succeeds() {
     let body: &'static [u8] = b"after-failures";
     let server = MockServer::spawn(body, 2); // first 2 requests fail
     let dir = {
-        let d = std::env::temp_dir().join(format!("rustdl-test-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("rustdl-retry-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
@@ -190,7 +190,7 @@ async fn resume_after_partial() {
     let body: &'static [u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     let server = MockServer::spawn(body, 0);
     let dir = {
-        let d = std::env::temp_dir().join(format!("rustdl-test-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("rustdl-resume-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
@@ -258,7 +258,7 @@ fn backoff_and_segments_unit() {
 fn checksum_roundtrip() {
     use rustdl::verification::checksum::{hash_file, verify_file, HashAlgo};
     let dir = {
-        let d = std::env::temp_dir().join(format!("rustdl-test-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("rustdl-checksum-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
