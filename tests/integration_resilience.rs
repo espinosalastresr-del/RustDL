@@ -700,4 +700,14 @@ async fn partially_written_multi_segments_resume_with_sha256_integrity() {
     assert!(state.segments.iter().all(|s| s.completed));
     assert_eq!(state.downloaded, body.len() as u64);
     assert_eq!(std::fs::read(dir.join("multi-resume.bin")).unwrap(), body);
+}#[test]
+fn partial_response_requires_matching_range_start_and_length() {
+    use rustdl::metadata::http::validate_partial;
+
+    assert!(validate_partial(206, Some("bytes 20-29/100"), 20, Some(10)).is_ok());
+    assert!(validate_partial(206, Some("bytes 21-29/100"), 20, Some(9)).is_err());
+    assert!(validate_partial(206, Some("bytes 20-29/100"), 20, Some(9)).is_err());
+    assert!(validate_partial(200, None, 20, Some(80)).is_err());
 }
+
+
