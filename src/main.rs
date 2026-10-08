@@ -1,15 +1,14 @@
 //! rustdl CLI — thin frontend over the `rustdl` library.
 
 use clap::{CommandFactory, Parser};
-use rustdl::config::{parse_size, Config, Profile};
+use rustdl::config::{parse_size, Config};
 use rustdl::downloader::engine::{human_bytes, DownloadOptions, Engine, ProgressSnapshot};
 use rustdl::errors::{DownloadError, Result};
+use rustdl::logging;
 use rustdl::queue::{Queue, QueueStatus};
 use rustdl::storage::state::find_incomplete;
 use rustdl::ui;
 use rustdl::verification::checksum::{hash_file, verify_file, HashAlgo};
-use rustdl::{logging, DownloadStatus};
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::watch;
@@ -252,8 +251,7 @@ async fn run(mut cli: Cli) -> Result<()> {
             sha1,
             md5,
         }) => {
-            let has_any =
-                sha256.is_some() || sha512.is_some() || sha1.is_some() || md5.is_some();
+            let has_any = sha256.is_some() || sha512.is_some() || sha1.is_some() || md5.is_some();
             if let Some(h) = sha256 {
                 verify_file(&file, HashAlgo::Sha256, &h)?;
                 println!("SHA-256 OK");
@@ -298,21 +296,152 @@ async fn run(mut cli: Cli) -> Result<()> {
             if let Some(ref url) = cli.url {
                 do_download(&cfg, &cli, url, cancel).await?;
             } else {
-                let mut cmd = Cli::command();
-                cmd.print_help().ok();
-                println!();
+                run_interactive(&mut cli, &mut cfg, cancel).await?;
             }
         }
     }
     Ok(())
 }
 
-async fn do_download(
+async fn run_interactive(cli: &mut Cli, cfg: &mut Config, cancel: Arc<AtomicBool>) -> Result<()> {
+    loop {
+        match ui::menu::run(cfg)? {
+            ui::menu::Action::NewDownload { url, output } => {
+                run_interactive_download(cfg, cli, &url, output, cancel.clone()).await?;
+            }
+            ui::menu::Action::Resume(id) => {
+                let state = find_incomplete(&cfg.download_dir)?
+                    .into_iter()
+                    .find(|s| s.id == id)
+                    .ok_or_else(|| DownloadError::NotFound(id.clone()))?;
+                run_interactive_download(cfg, cli, &state.url, None, cancel.clone()).await?;
+            }
+            ui::menu::Action::ResumeAll => {
+                for state in find_incomplete(&cfg.download_dir)? {
+                    if state.url.is_empty() {
+                        eprintln!("Skipping {}: no URL in saved state.", state.id);
+                        continue;
+                    }
+                    run_interactive_download(cfg, cli, &state.url, None, cancel.clone()).await?;
+                    if cancel.load(Ordering::SeqCst) {
+                        cancel.store(false, Ordering::SeqCst);
+                        break;
+                    }
+                }
+            }
+            ui::menu::Action::Retry(id) => {
+                let state = find_incomplete(&cfg.download_dir)?
+                    .into_iter()
+                    .find(|s| s.id == id)
+                    .ok_or_else(|| DownloadError::NotFound(id.clone()))?;
+                run_interactive_download(cfg, cli, &state.url, None, cancel.clone()).await?;
+            }
+            ui::menu::Action::Remove(id) => {
+                let mut queue = Queue::load()?;
+                let _ = queue.remove(&id);
+                queue.save()?;
+                for state in find_incomplete(&cfg.download_dir)? {
+                    if state.id == id {
+                        let _ = std::fs::remove_file(&state.part_path);
+                        let _ = std::fs::remove_file(state.state_file_path());
+                        println!("Removed {}.", id);
+                        break;
+                    }
+                }
+            }
+            ui::menu::Action::Info(id) => {
+                let state = find_incomplete(&cfg.download_dir)?
+                    .into_iter()
+                    .find(|s| s.id == id)
+                    .ok_or_else(|| DownloadError::NotFound(id.clone()))?;
+                println!("{}", serde_json::to_string_pretty(&state)?);
+            }
+            ui::menu::Action::QueueAdd { url, output } => {
+                let mut queue = Queue::load()?;
+                let item = queue.add(&url, output);
+                queue.save()?;
+                println!("Queued {}.", item.id);
+            }
+            ui::menu::Action::QueueRemove(id) => {
+                let mut queue = Queue::load()?;
+                queue.remove(&id)?;
+                queue.save()?;
+                println!("Removed queue item {}.", id);
+            }
+            ui::menu::Action::QueueStart => {
+                let mut queue = Queue::load()?;
+                let pending: Vec<_> = queue
+                    .items
+                    .iter()
+                    .filter(|item| item.status == QueueStatus::Queued)
+                    .cloned()
+                    .collect();
+                for item in pending {
+                    if let Some(qi) = queue.items.iter_mut().find(|q| q.id == item.id) {
+                        qi.status = QueueStatus::Active;
+                    }
+                    queue.save()?;
+                    let result = run_interactive_download(
+                        cfg,
+                        cli,
+                        &item.url,
+                        item.output_name.clone(),
+                        cancel.clone(),
+                    )
+                    .await;
+                    if let Some(qi) = queue.items.iter_mut().find(|q| q.id == item.id) {
+                        qi.status = if result.is_ok() {
+                            QueueStatus::Done
+                        } else {
+                            QueueStatus::Failed
+                        };
+                    }
+                    queue.save()?;
+                    result?;
+                    if cancel.load(Ordering::SeqCst) {
+                        cancel.store(false, Ordering::SeqCst);
+                        break;
+                    }
+                }
+            }
+            ui::menu::Action::Verify(file) => match hash_file(&file, HashAlgo::Sha256) {
+                Ok(hash) => println!("SHA-256: {}", hash),
+                Err(e) => eprintln!("Verification failed: {}", e),
+            },
+            ui::menu::Action::History | ui::menu::Action::Settings => {}
+            ui::menu::Action::Exit => return Ok(()),
+        }
+    }
+}
+
+async fn run_interactive_download(
     cfg: &Config,
-    cli: &Cli,
+    cli: &mut Cli,
     url: &str,
+    output: Option<String>,
     cancel: Arc<AtomicBool>,
 ) -> Result<()> {
+    cancel.store(false, Ordering::SeqCst);
+    let previous_output = cli.output.clone();
+    cli.output = output;
+    let result = do_download(cfg, cli, url, cancel.clone()).await;
+    cli.output = previous_output;
+
+    match result {
+        Ok(()) => Ok(()),
+        Err(DownloadError::Cancelled) => {
+            println!("Download paused. Progress has been saved.");
+            cancel.store(false, Ordering::SeqCst);
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("Download failed: {}", e);
+            Ok(())
+        }
+    }
+}
+
+async fn do_download(cfg: &Config, cli: &Cli, url: &str, cancel: Arc<AtomicBool>) -> Result<()> {
     let engine = Engine::new(cfg.clone())?;
     let basic_auth = cli.basic_auth.as_ref().and_then(|s| {
         let mut p = s.splitn(2, ':');
@@ -347,7 +476,7 @@ async fn do_download(
         status: "starting".into(),
     });
 
-    let _ui = ui::progress::spawn_progress_ui(rx, cli.quiet, cli.silent, cli.json);
+    let _ui = ui::progress::spawn_progress_ui(rx, cli.quiet, cli.silent, cli.json, cancel.clone());
     let result = engine.download(opts, Some(tx), cancel).await;
 
     match result {

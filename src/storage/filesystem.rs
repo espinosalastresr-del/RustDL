@@ -1,6 +1,6 @@
 //! Filesystem helpers: space check, sanitize names, ensure dirs.
 
-use crate::errors::{DownloadError, Result};
+use crate::errors::Result;
 use std::path::{Path, PathBuf};
 
 /// Sanitize filename: strip path components, remove dangerous chars.
@@ -49,10 +49,7 @@ fn urlencoding_decode(s: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let (Some(h), Some(l)) = (
-                hex_val(bytes[i + 1]),
-                hex_val(bytes[i + 2]),
-            ) {
+            if let (Some(h), Some(l)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
                 out.push((h * 16 + l) as char);
                 i += 3;
                 continue;
@@ -86,7 +83,6 @@ pub fn available_space(path: &Path) -> Result<u64> {
     }
     #[cfg(unix)]
     {
-        use std::os::unix::fs::MetadataExt;
         // Prefer statvfs via libc if available; fallback to a conservative check
         match fs2::available_space(&p) {
             Ok(s) => Ok(s),
@@ -134,11 +130,7 @@ pub fn filename_from_content_disposition(header: &str) -> Option<String> {
     if let Some(idx) = header.to_lowercase().find("filename=") {
         let rest = &header[idx + 9..];
         let rest = rest.trim_start_matches(|c: char| c == '"' || c.is_whitespace());
-        let name = rest
-            .split(|c| c == '"' || c == ';' || c == '\n')
-            .next()
-            .unwrap_or("")
-            .trim();
+        let name = rest.split(['"', ';', '\n']).next().unwrap_or("").trim();
         if !name.is_empty() {
             return Some(sanitize_filename(name));
         }

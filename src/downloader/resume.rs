@@ -35,18 +35,11 @@ pub fn decide_resume(
     }
 
     // ETag / Last-Modified changed
-    let etag_changed = match (&state.etag, &remote.etag) {
-        (Some(a), Some(b)) if a != b => true,
-        _ => false,
-    };
-    let lm_changed = match (&state.last_modified, &remote.last_modified) {
-        (Some(a), Some(b)) if a != b => true,
-        _ => false,
-    };
-    let size_changed = match (state.total_size, remote.content_length) {
-        (Some(a), Some(b)) if a != b => true,
-        _ => false,
-    };
+    let etag_changed = matches!((&state.etag, &remote.etag), (Some(a), Some(b)) if a != b);
+    let lm_changed =
+        matches!((&state.last_modified, &remote.last_modified), (Some(a), Some(b)) if a != b);
+    let size_changed =
+        matches!((state.total_size, remote.content_length), (Some(a), Some(b)) if a != b);
 
     if etag_changed || lm_changed || size_changed {
         if force_resume {

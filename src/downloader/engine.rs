@@ -4,7 +4,7 @@ use crate::config::Config;
 use crate::downloader::range::{parse_content_range, range_header, range_header_segment};
 use crate::downloader::request::build_client;
 use crate::downloader::resume::{decide_resume, remote_changed_error, ResumeDecision};
-use crate::downloader::retry::Backoff;
+use crate::downloader::retry::{parse_retry_after, Backoff};
 use crate::downloader::segments::plan_segments;
 use crate::errors::{DownloadError, Result};
 use crate::metadata::http::{probe, validate_partial, RemoteMeta};
@@ -99,10 +99,8 @@ impl Engine {
         let output_path = opts.output_dir.join(&filename);
         let part = part_path(&output_path);
 
-        if output_path.exists() && !opts.overwrite && !opts.restart {
-            if !part.exists() {
-                return Err(DownloadError::FileExists(output_path));
-            }
+        if output_path.exists() && !opts.overwrite && !opts.restart && !part.exists() {
+            return Err(DownloadError::FileExists(output_path));
         }
 
         if let Some(total) = remote.content_length {
@@ -213,10 +211,7 @@ impl Engine {
             && !self.config.data_saver;
 
         let result = if use_multi {
-            info!(
-                "Using {} parallel connections",
-                self.config.connections
-            );
+            info!("Using {} parallel connections", self.config.connections);
             self.download_multi(&mut state, &remote, &opts, progress_tx, cancel)
                 .await
         } else {
@@ -230,10 +225,8 @@ impl Engine {
                 if let Some(expected) = state.total_size {
                     if actual != expected {
                         state.status = DownloadStatus::Failed;
-                        state.error = Some(format!(
-                            "Incomplete: expected {}, got {}",
-                            expected, actual
-                        ));
+                        state.error =
+                            Some(format!("Incomplete: expected {}, got {}", expected, actual));
                         state.save()?;
                         return Err(DownloadError::Incomplete { expected, actual });
                     }
@@ -334,6 +327,9 @@ impl Engine {
                     return Err(DownloadError::ResumeUnsupported);
                 }
                 req = req.header("Range", range_header(offset));
+                if let Some(v) = state.etag.as_deref().or(state.last_modified.as_deref()) {
+                    req = req.header("If-Range", v);
+                }
             }
 
             let resp = match req.send().await {
@@ -357,7 +353,7 @@ impl Engine {
                 .headers()
                 .get("retry-after")
                 .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.parse::<u64>().ok());
+                .and_then(parse_retry_after);
 
             if status == 429 || (500..600).contains(&status) || status == 408 || status == 425 {
                 let err = DownloadError::Http {
@@ -394,16 +390,14 @@ impl Engine {
                     .headers()
                     .get(CONTENT_LENGTH)
                     .and_then(|v| v.to_str().ok())
-                    .and_then(|s| s.parse().ok());
+                    .and_then(parse_retry_after);
                 if let Err(e) = validate_partial(status, cr.as_deref(), offset, cl) {
                     error!("Invalid range response — refusing to corrupt partial file");
                     return Err(e);
                 }
                 if let Some(ref crh) = cr {
-                    if let Ok((_, _, total)) = parse_content_range(crh) {
-                        if let Some(t) = total {
-                            state.total_size = Some(t);
-                        }
+                    if let Ok((_, _, Some(t))) = parse_content_range(crh) {
+                        state.total_size = Some(t);
                     }
                 }
             } else if status == 200 {
@@ -579,19 +573,19 @@ impl Engine {
             state.segments = plan_segments(total, self.config.connections);
         }
 
-        // Pre-allocate part file to total size if needed
+        // Never use preallocation as a progress signal. A preallocated/sparse
+        // file can have the final length while many ranges are still missing.
         ensure_parent_dir(&state.part_path)?;
         {
-            let f = std::fs::OpenOptions::new()
+            let _f = std::fs::OpenOptions::new()
                 .create(true)
                 .write(true)
+                .truncate(false)
                 .open(&state.part_path)?;
-            if file_size(&state.part_path)? < total {
-                f.set_len(total)?;
-            }
         }
 
-        // Rebuild segment progress from disk is approximate; track in state
+        // Segment metadata is the source of truth for multi-connection progress.
+        state.downloaded = state.segments.iter().map(|s| s.downloaded).sum();
         let file = Arc::new(Mutex::new(
             tokio::fs::OpenOptions::new()
                 .write(true)
@@ -601,24 +595,10 @@ impl Engine {
         ));
 
         let global_downloaded = Arc::new(AtomicU64::new(
-            state
-                .segments
-                .iter()
-                .map(|s| s.downloaded)
-                .sum::<u64>(),
+            state.segments.iter().map(|s| s.downloaded).sum::<u64>(),
         ));
-        // If segments empty downloaded, estimate from file size of completed ranges
-        if global_downloaded.load(Ordering::SeqCst) == 0 {
-            let done: u64 = state
-                .segments
-                .iter()
-                .filter(|s| s.completed)
-                .map(|s| s.end - s.start + 1)
-                .sum();
-            global_downloaded.store(done, Ordering::SeqCst);
-        }
+        // Do not derive progress from file_size(): ranged writes may create holes.
 
-        let start_time = Instant::now();
         let client = self.client.clone();
         let url = state.final_url.clone().unwrap_or_else(|| state.url.clone());
         let headers = opts.headers.clone();
@@ -627,7 +607,8 @@ impl Engine {
         let idle_timeout = self.config.idle_timeout();
         let retry_cfg = self.config.retries.clone();
         let rate_limit = self.config.limit_rate;
-        
+        let validator = state.etag.clone().or_else(|| state.last_modified.clone());
+
         let mut handles = Vec::new();
         let segs: Vec<SegmentState> = state.segments.clone();
 
@@ -644,8 +625,9 @@ impl Engine {
             let cancel = cancel.clone();
             let global_downloaded = global_downloaded.clone();
             let retry_cfg = retry_cfg.clone();
+            let validator = validator.clone();
             let mut seg = seg;
-                        handles.push(tokio::spawn(async move {
+            handles.push(tokio::spawn(async move {
                 let mut backoff = Backoff::new(retry_cfg);
                 loop {
                     if cancel.load(Ordering::SeqCst) {
@@ -668,6 +650,9 @@ impl Engine {
                         req = req.bearer_auth(t);
                     }
                     req = req.header("Range", range_header_segment(cur, seg.end));
+                    if let Some(v) = validator.as_deref() {
+                        req = req.header("If-Range", v);
+                    }
 
                     let resp = match req.send().await {
                         Ok(r) => r,
@@ -692,14 +677,32 @@ impl Engine {
                         tokio::time::sleep(delay).await;
                         continue;
                     }
-                    if status != 206 && status != 200 {
+                    if status != 206 {
                         return Err(DownloadError::Http {
                             status,
-                            message: format!("segment {}", seg.index),
+                            message: format!("segment {} requires 206 Partial Content", seg.index),
                         });
                     }
-                    if status == 200 && cur > 0 {
+
+                    let cr = resp
+                        .headers()
+                        .get(CONTENT_RANGE)
+                        .and_then(|v| v.to_str().ok());
+                    let cl = resp
+                        .headers()
+                        .get(CONTENT_LENGTH)
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|s| s.parse::<u64>().ok());
+                    validate_partial(status, cr, cur, cl)?;
+                    let (range_start, range_end, range_total) =
+                        parse_content_range(cr.ok_or(DownloadError::InvalidRange)?)?;
+                    if range_start != cur || range_end > seg.end {
                         return Err(DownloadError::InvalidRange);
+                    }
+                    if let Some(t) = range_total {
+                        if t != total {
+                            return Err(DownloadError::InvalidRange);
+                        }
                     }
 
                     let mut stream = resp.bytes_stream();
@@ -731,6 +734,11 @@ impl Engine {
                                     }
                                 }
                                 let n = chunk.len() as u64;
+                                let remaining =
+                                    seg.end.saturating_sub(seg.start + seg.downloaded) + 1;
+                                if n > remaining {
+                                    return Err(DownloadError::InvalidRange);
+                                }
                                 let write_pos = seg.start + seg.downloaded;
                                 {
                                     let mut f = file.lock().await;
@@ -761,6 +769,15 @@ impl Engine {
                     if let Some(s) = updated.iter_mut().find(|s| s.index == seg.index) {
                         *s = seg;
                     }
+                    // Persist each completed segment before waiting on the next
+                    // worker so a later failure never discards earlier progress.
+                    state.segments = updated.clone();
+                    state.downloaded = state.segments.iter().map(|s| s.downloaded).sum();
+                    {
+                        let f = file.lock().await;
+                        f.sync_data().await?;
+                    }
+                    state.save()?;
                 }
                 Ok(Err(e)) => {
                     state.segments = updated;
@@ -783,31 +800,39 @@ impl Engine {
         }
         let meta_len = file_size(&state.part_path)?;
         if meta_len > total {
-            let f = std::fs::OpenOptions::new().write(true).open(&state.part_path)?;
+            let f = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&state.part_path)?;
             f.set_len(total)?;
         }
         state.downloaded = total.min(file_size(&state.part_path)?);
         state.save()?;
 
-        if state.segments.iter().all(|s| s.completed)
-            || state.downloaded >= total
-        {
+        if state.segments.iter().all(|s| s.completed) {
             Ok(())
         } else {
             // Retry incomplete via single-connection path from current size
             // Recompute downloaded as contiguous prefix for single resume fallback
             warn!("Some segments incomplete; falling back to single-connection resume");
-            // Compact: rewrite file is complex; mark remaining via single from min incomplete
-            let min_incomplete = state
-                .segments
-                .iter()
-                .filter(|s| !s.completed)
-                .map(|s| s.start + s.downloaded)
-                .min()
-                .unwrap_or(state.downloaded);
-            // Truncate part to contiguous downloaded region for single resume safety
-            let contiguous = min_incomplete;
-            let f = std::fs::OpenOptions::new().write(true).open(&state.part_path)?;
+            // Only the prefix covered by fully completed segments plus the
+            // contiguous bytes of the first incomplete segment is safe to keep.
+            let mut sorted = state.segments.clone();
+            sorted.sort_by_key(|s| s.start);
+            let mut contiguous = 0u64;
+            for seg in sorted {
+                if seg.start != contiguous {
+                    break;
+                }
+                if seg.completed {
+                    contiguous = seg.end.saturating_add(1);
+                } else {
+                    contiguous = seg.start.saturating_add(seg.downloaded);
+                    break;
+                }
+            }
+            let f = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&state.part_path)?;
             f.set_len(contiguous)?;
             state.downloaded = contiguous;
             state.segments.clear();

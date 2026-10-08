@@ -76,13 +76,12 @@ impl DownloadError {
     /// Whether this error is typically retryable.
     pub fn is_retryable(&self) -> bool {
         match self {
-            DownloadError::Network(_)
-            | DownloadError::Timeout(_)
-            | DownloadError::Reqwest(_) => true,
-            DownloadError::Http { status, .. } => matches!(
-                *status,
-                408 | 425 | 429 | 500 | 502 | 503 | 504
-            ),
+            DownloadError::Network(_) | DownloadError::Timeout(_) | DownloadError::Reqwest(_) => {
+                true
+            }
+            DownloadError::Http { status, .. } => {
+                matches!(*status, 408 | 425 | 429 | 500 | 502 | 503 | 504)
+            }
             DownloadError::Io(e) => {
                 matches!(
                     e.kind(),

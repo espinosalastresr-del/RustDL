@@ -9,7 +9,9 @@ pub fn build_client(cfg: &Config) -> Result<Client> {
     let mut builder = Client::builder()
         .user_agent(&cfg.user_agent)
         .connect_timeout(cfg.connect_timeout())
-        .redirect(reqwest::redirect::Policy::limited(cfg.max_redirects as usize));
+        .redirect(reqwest::redirect::Policy::limited(
+            cfg.max_redirects as usize,
+        ));
 
     if let Some(secs) = cfg.timeouts.request_secs {
         if secs > 0 {

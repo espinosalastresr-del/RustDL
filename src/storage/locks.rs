@@ -26,16 +26,13 @@ impl DownloadLock {
                 DownloadError::Storage(format!("Lock error: {}", e))
             }
         })?;
-        Ok(Self {
-            _file: file,
-            path,
-        })
+        Ok(Self { _file: file, path })
     }
 }
 
 impl Drop for DownloadLock {
     fn drop(&mut self) {
-        let _ = self._file.unlock();
+        let _ = fs2::FileExt::unlock(&self._file);
         let _ = std::fs::remove_file(&self.path);
     }
 }

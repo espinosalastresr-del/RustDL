@@ -1,6 +1,6 @@
 //! Download state persistence (checkpoints).
 
-use crate::errors::{DownloadError, Result};
+use crate::errors::Result;
 use crate::storage::atomic::atomic_write_string;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

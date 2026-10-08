@@ -148,13 +148,10 @@ pub struct Cli {
     pub bearer: Option<String>,
 }
 
-
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Download a URL
-    Download {
-        url: String,
-    },
+    Download { url: String },
     /// List incomplete / known downloads
     List,
     /// Add URL to queue
@@ -171,21 +168,13 @@ pub enum Commands {
         id: Option<String>,
     },
     /// Pause is cooperative via Ctrl+C; marks state
-    Pause {
-        id: Option<String>,
-    },
+    Pause { id: Option<String> },
     /// Retry a failed download
-    Retry {
-        id: String,
-    },
+    Retry { id: String },
     /// Remove download state / queue item
-    Remove {
-        id: String,
-    },
+    Remove { id: String },
     /// Show info about a download
-    Info {
-        id: String,
-    },
+    Info { id: String },
     /// Show history
     History,
     /// Verify file checksum
@@ -220,6 +209,7 @@ pub enum ConfigCmd {
 }
 
 #[derive(Clone, Debug, ValueEnum)]
+#[allow(clippy::enum_variant_names)]
 pub enum Shell {
     Bash,
     Zsh,

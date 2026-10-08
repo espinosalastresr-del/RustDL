@@ -21,11 +21,7 @@ pub struct RemoteMeta {
     pub status: u16,
 }
 
-pub async fn probe(
-    client: &Client,
-    url: &str,
-    max_redirects: u32,
-) -> Result<RemoteMeta> {
+pub async fn probe(client: &Client, url: &str, _max_redirects: u32) -> Result<RemoteMeta> {
     let parsed = Url::parse(url).map_err(|e| DownloadError::InvalidUrl(e.to_string()))?;
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
         return Err(DownloadError::InvalidUrl(format!(
@@ -167,17 +163,16 @@ pub fn validate_partial(
             message: "Expected 206 Partial Content for resume".into(),
         });
     }
-    if let Some(cr) = content_range {
-        // bytes START-END/TOTAL
-        let parts: Vec<&str> = cr.trim_start_matches("bytes ").split(|c| c == '-' || c == '/').collect();
-        if parts.len() >= 1 {
-            if let Ok(start) = parts[0].parse::<u64>() {
-                if start != requested_offset {
-                    return Err(DownloadError::InvalidRange);
-                }
-            }
+    let cr = content_range.ok_or(DownloadError::InvalidRange)?;
+    let (start, end, _) = crate::downloader::range::parse_content_range(cr)?;
+    if start != requested_offset || end < start {
+        return Err(DownloadError::InvalidRange);
+    }
+    let expected_len = end - start + 1;
+    if let Some(content_length) = content_length_header {
+        if content_length != expected_len {
+            return Err(DownloadError::InvalidRange);
         }
     }
-    let _ = content_length_header;
     Ok(())
 }
