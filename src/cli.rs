@@ -209,6 +209,7 @@ pub enum ConfigCmd {
 }
 
 #[derive(Clone, Debug, ValueEnum)]
+#[allow(clippy::enum_variant_names)]
 pub enum Shell {
     Bash,
     Zsh,
