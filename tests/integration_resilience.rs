@@ -14,6 +14,7 @@ use std::time::Duration;
 struct MockServer {
     addr: String,
     hits: Arc<AtomicU32>,
+    if_range_seen: Arc<AtomicU32>,
 }
 
 impl MockServer {
@@ -22,15 +23,17 @@ impl MockServer {
         let addr = listener.local_addr().unwrap().to_string();
         let hits = Arc::new(AtomicU32::new(0));
         let hits_c = hits.clone();
+        let if_range_seen = Arc::new(AtomicU32::new(0));
+        let if_range_seen_c = if_range_seen.clone();
         thread::spawn(move || {
             for stream in listener.incoming().flatten() {
                 let n = hits_c.fetch_add(1, Ordering::SeqCst);
-                let _ = handle(stream, body, n < fail_first);
+                let _ = handle(stream, body, n < fail_first, &if_range_seen_c);
             }
         });
         // Give server a moment
         thread::sleep(Duration::from_millis(50));
-        Self { addr, hits }
+        Self { addr, hits, if_range_seen }
     }
 
     fn url(&self, path: &str) -> String {
@@ -38,12 +41,20 @@ impl MockServer {
     }
 }
 
-fn handle(mut stream: TcpStream, body: &[u8], fail: bool) -> std::io::Result<()> {
+fn handle(
+    mut stream: TcpStream,
+    body: &[u8],
+    fail: bool,
+    if_range_seen: &AtomicU32,
+) -> std::io::Result<()> {
     let mut buf = [0u8; 4096];
     let n = stream.read(&mut buf)?;
     let req = String::from_utf8_lossy(&buf[..n]);
     let is_head = req.starts_with("HEAD ");
     let range = req.lines().find(|l| l.to_lowercase().starts_with("range:"));
+    if req.lines().any(|l| l.to_lowercase().starts_with("if-range:")) {
+        if_range_seen.fetch_add(1, Ordering::SeqCst);
+    }
 
     if fail {
         write!(
@@ -68,7 +79,7 @@ fn handle(mut stream: TcpStream, body: &[u8], fail: bool) -> std::io::Result<()>
         let slice = &body[start..=end];
         write!(
             stream,
-            "HTTP/1.1 206 Partial Content\r\nAccept-Ranges: bytes\r\nContent-Range: bytes {}-{}/{}\r\nContent-Length: {}\r\n\r\n",
+            "HTTP/1.1 206 Partial Content\r\nAccept-Ranges: bytes\r\nETag: "v1"\r\nContent-Range: bytes {}-{}/{}\r\nContent-Length: {}\r\n\r\n",
             start,
             end,
             body.len(),
@@ -80,7 +91,7 @@ fn handle(mut stream: TcpStream, body: &[u8], fail: bool) -> std::io::Result<()>
     } else {
         write!(
             stream,
-            "HTTP/1.1 200 OK\r\nAccept-Ranges: bytes\r\nContent-Length: {}\r\n\r\n",
+            "HTTP/1.1 200 OK\r\nAccept-Ranges: bytes\r\nETag: "v1"\r\nContent-Length: {}\r\n\r\n",
             body.len()
         )?;
         if !is_head {
@@ -708,6 +719,67 @@ fn partial_response_requires_matching_range_start_and_length() {
     assert!(validate_partial(206, Some("bytes 21-29/100"), 20, Some(9)).is_err());
     assert!(validate_partial(206, Some("bytes 20-29/100"), 20, Some(9)).is_err());
     assert!(validate_partial(200, None, 20, Some(80)).is_err());
+}
+
+#[tokio::test]
+async fn resumed_request_sends_if_range_validator() {
+    use rustdl::storage::state::DownloadState;
+
+    let body: &'static [u8] = b"if-range-integrity-payload";
+    let server = MockServer::spawn(body, 0);
+    let dir = std::env::temp_dir().join(format!(
+        "rustdl-if-range-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let part = dir.join("file.bin.part");
+    std::fs::write(&part, &body[..8]).unwrap();
+
+    let mut state = DownloadState::new(
+        &server.url("file.bin"),
+        "file.bin",
+        dir.join("file.bin"),
+        part,
+    );
+    state.downloaded = 8;
+    state.total_size = Some(body.len() as u64);
+    state.accept_ranges = true;
+    state.etag = Some("\"v1\"".into());
+    state.save().unwrap();
+
+    let mut cfg = rustdl::Config::default();
+    cfg.download_dir = dir.clone();
+    cfg.connections = 1;
+    cfg.retries.max_retries = Some(3);
+    cfg.timeouts.idle_secs = 10;
+    let engine = rustdl::Engine::new(cfg).unwrap();
+    let opts = rustdl::DownloadOptions {
+        url: server.url("file.bin"),
+        output_dir: dir.clone(),
+        output_name: Some("file.bin".into()),
+        force_resume: false,
+        restart: false,
+        overwrite: true,
+        sha256: Some(sha256_hex(body)),
+        sha512: None,
+        sha1: None,
+        md5: None,
+        headers: vec![],
+        basic_auth: None,
+        bearer: None,
+        yes: true,
+        quiet: true,
+        silent: true,
+        json: false,
+    };
+    let result = engine
+        .download(opts, None, Arc::new(std::sync::atomic::AtomicBool::new(false)))
+        .await
+        .expect("resume with validator");
+    assert_eq!(result.status, rustdl::DownloadStatus::Completed);
+    assert!(server.if_range_seen.load(Ordering::SeqCst) >= 1);
+    assert_eq!(std::fs::read(dir.join("file.bin")).unwrap(), body);
 }
 
 
