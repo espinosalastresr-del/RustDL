@@ -412,8 +412,8 @@ fn resume_decision_rejects_changed_size_without_validator() {
     );
 }
 
-#[test]
-fn corrupted_state_file_falls_back_to_disk_progress() {
+#[tokio::test]
+async fn corrupted_state_file_falls_back_to_disk_progress() {
     let body: &'static [u8] = b"corrupted-state-recovery-payload";
     let server = MockServer::spawn(body, 0);
     let dir = std::env::temp_dir().join(format!("rustdl-state-recovery-{}", std::process::id()));
