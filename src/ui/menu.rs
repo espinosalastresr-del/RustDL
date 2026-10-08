@@ -230,7 +230,9 @@ impl Drop for TerminalGuard{fn drop(&mut self){let _=disable_raw_mode();let _=ex
 fn is_http_url(value:&str)->bool{match url::Url::parse(value.trim()){Ok(p)=>matches!(p.scheme(),"http"|"https")&&p.host().is_some(),Err(_)=>false}}
 
 #[cfg(test)]
-mod tests{use super::is_http_url;#[test]fn accepts_http_and_https(){assert!(is_http_url("https://example.com/file"));assert!(is_http_url("http://example.com/file"));}#[test]fn rejects_invalid(){assert!(!is_http_url("ftp://example.com/file"));assert!(!is_http_url("not-a-url"));assert!(!is_http_url("https://"));}}(value: &str) -> bool {
+mod tests{use super::is_http_url;#[test]fn accepts_http_and_https(){assert!(is_http_url("https://example.com/file"));assert!(is_http_url("http://example.com/file"));}#[test]fn rejects_invalid(){assert!(!is_http_url("ftp://example.com/file"));assert!(!is_http_url("not-a-url"));assert!(!is_http_url("https://"));}}
+
+fn is_http_url(value: &str) -> bool {
     match url::Url::parse(value) {
         Ok(parsed) => matches!(parsed.scheme(), "http" | "https") && parsed.host().is_some(),
         Err(_) => false,
