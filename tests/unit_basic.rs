@@ -1,5 +1,3 @@
-use std::path::Path;
-
 // Integration-style unit tests that don't need the full binary.
 
 #[test]
