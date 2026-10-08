@@ -398,12 +398,10 @@ async fn run_interactive(cli: &mut Cli, cfg: &mut Config, cancel: Arc<AtomicBool
                     }
                 }
             }
-            ui::menu::Action::Verify(file) => {
-                match hash_file(&file, HashAlgo::Sha256) {
-                    Ok(hash) => println!("SHA-256: {}", hash),
-                    Err(e) => eprintln!("Verification failed: {}", e),
-                }
-            }
+            ui::menu::Action::Verify(file) => match hash_file(&file, HashAlgo::Sha256) {
+                Ok(hash) => println!("SHA-256: {}", hash),
+                Err(e) => eprintln!("Verification failed: {}", e),
+            },
             ui::menu::Action::History | ui::menu::Action::Settings => {}
             ui::menu::Action::Exit => return Ok(()),
         }
