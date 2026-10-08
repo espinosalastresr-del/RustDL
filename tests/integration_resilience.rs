@@ -266,3 +266,65 @@ fn sanitize_and_parse_size() {
     assert_eq!(parse_size("500K").unwrap(), 500 * 1024);
     assert_eq!(parse_size("2M").unwrap(), 2 * 1024 * 1024);
 }
+
+
+#[test]
+fn partial_response_validation_rejects_inconsistent_ranges() {
+    use rustdl::metadata::http::validate_partial;
+
+    assert!(validate_partial(206, Some("bytes 10-19/100"), 10, Some(10)).is_ok());
+    assert!(validate_partial(206, Some("bytes 11-19/100"), 10, Some(9)).is_err());
+    assert!(validate_partial(206, Some("bytes 10-19/100"), 10, Some(9)).is_err());
+    assert!(validate_partial(200, Some("bytes 10-19/100"), 10, Some(10)).is_err());
+}
+
+#[tokio::test]
+async fn multi_connection_download_tracks_segments_not_file_length() {
+    let body: &'static [u8] =
+        b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    let server = MockServer::spawn(body, 0);
+    let dir = {
+        let d = std::env::temp_dir().join(format!(
+            "rustdl-multi-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    };
+
+    let mut cfg = rustdl::Config::default();
+    cfg.download_dir = dir.clone();
+    cfg.connections = 4;
+    cfg.retries.max_retries = Some(3);
+    cfg.timeouts.idle_secs = 10;
+
+    let engine = rustdl::Engine::new(cfg).unwrap();
+    let opts = rustdl::DownloadOptions {
+        url: server.url("multi.bin"),
+        output_dir: dir.clone(),
+        output_name: Some("multi.bin".into()),
+        force_resume: false,
+        restart: false,
+        overwrite: true,
+        sha256: None,
+        sha512: None,
+        sha1: None,
+        md5: None,
+        headers: vec![],
+        basic_auth: None,
+        bearer: None,
+        yes: true,
+        quiet: true,
+        silent: true,
+        json: false,
+    };
+    let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+    let state = engine.download(opts, None, cancel).await.expect("multi download");
+    assert_eq!(state.status, rustdl::DownloadStatus::Completed);
+    assert_eq!(state.segments.len(), 4);
+    assert!(state.segments.iter().all(|s| s.completed));
+    assert_eq!(state.downloaded, body.len() as u64);
+    assert_eq!(std::fs::read(dir.join("multi.bin")).unwrap(), body);
+}
