@@ -303,11 +303,7 @@ async fn run(mut cli: Cli) -> Result<()> {
     Ok(())
 }
 
-async fn run_interactive(
-    cli: &mut Cli,
-    cfg: &mut Config,
-    cancel: Arc<AtomicBool>,
-) -> Result<()> {
+async fn run_interactive(cli: &mut Cli, cfg: &mut Config, cancel: Arc<AtomicBool>) -> Result<()> {
     loop {
         match ui::menu::run(cfg)? {
             ui::menu::Action::NewDownload { url, output } => {
