@@ -8,10 +8,7 @@ use std::path::PathBuf;
 
 #[derive(Debug)]
 pub enum Action {
-    NewDownload {
-        url: String,
-        output: Option<String>,
-    },
+    NewDownload { url: String, output: Option<String> },
     ResumeAll,
     List,
     Verify(PathBuf),
