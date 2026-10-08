@@ -341,9 +341,9 @@ async fn multi_connection_download_tracks_segments_not_file_length() {
 
 #[test]
 fn resume_decision_rejects_changed_remote_representation() {
+    use rustdl::downloader::resume::{decide_resume, ResumeDecision};
     use rustdl::metadata::RemoteMeta;
     use rustdl::storage::state::DownloadState;
-    use rustdl::downloader::resume::{decide_resume, ResumeDecision};
 
     let dir = std::env::temp_dir().join(format!("rustdl-resume-change-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
