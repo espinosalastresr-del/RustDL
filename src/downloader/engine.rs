@@ -829,7 +829,9 @@ impl Engine {
                     break;
                 }
             }
-            let f = std::fs::OpenOptions::new().write(true).open(&state.part_path)?;
+            let f = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&state.part_path)?;
             f.set_len(contiguous)?;
             state.downloaded = contiguous;
             state.segments.clear();
