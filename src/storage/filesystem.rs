@@ -130,11 +130,7 @@ pub fn filename_from_content_disposition(header: &str) -> Option<String> {
     if let Some(idx) = header.to_lowercase().find("filename=") {
         let rest = &header[idx + 9..];
         let rest = rest.trim_start_matches(|c: char| c == '"' || c.is_whitespace());
-        let name = rest
-            .split(['"', ';', '\n'])
-            .next()
-            .unwrap_or("")
-            .trim();
+        let name = rest.split(['"', ';', '\n']).next().unwrap_or("").trim();
         if !name.is_empty() {
             return Some(sanitize_filename(name));
         }
