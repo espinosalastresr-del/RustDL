@@ -2,13 +2,13 @@
 
 //! Integration / resilience tests with a local HTTP mock server.
 
+use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use sha2::{Digest, Sha256};
 
 /// Minimal HTTP server supporting GET/HEAD, Range, and fault injection.
 struct MockServer {
@@ -494,10 +494,8 @@ async fn interrupted_single_stream_resumes_with_sha256_integrity() {
             .collect::<Vec<_>>(),
     );
     let server = MockServer::spawn(body, 0);
-    let dir = std::env::temp_dir().join(format!(
-        "rustdl-interrupted-single-{}",
-        std::process::id()
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("rustdl-interrupted-single-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
 
@@ -534,11 +532,8 @@ async fn interrupted_single_stream_resumes_with_sha256_integrity() {
     let (tx, mut rx) = tokio::sync::watch::channel(None);
     let cancel_first = cancel.clone();
     let engine_first = engine.clone();
-    let first = tokio::spawn(async move {
-        engine_first
-            .download(opts, Some(tx), cancel_first)
-            .await
-    });
+    let first =
+        tokio::spawn(async move { engine_first.download(opts, Some(tx), cancel_first).await });
 
     let mut observed = 0u64;
     while observed == 0 {
@@ -549,7 +544,10 @@ async fn interrupted_single_stream_resumes_with_sha256_integrity() {
             observed = snapshot.downloaded;
         }
     }
-    assert!(observed > 0, "download must make progress before interruption");
+    assert!(
+        observed > 0,
+        "download must make progress before interruption"
+    );
     cancel.store(true, Ordering::SeqCst);
     let result = first.await.unwrap();
     assert!(matches!(result, Err(rustdl::DownloadError::Cancelled)));
@@ -604,10 +602,7 @@ async fn partially_written_multi_segments_resume_with_sha256_integrity() {
             .collect::<Vec<_>>(),
     );
     let server = MockServer::spawn(body, 0);
-    let dir = std::env::temp_dir().join(format!(
-        "rustdl-interrupted-multi-{}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("rustdl-interrupted-multi-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
 
