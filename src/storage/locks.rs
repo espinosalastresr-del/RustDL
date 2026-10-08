@@ -26,10 +26,7 @@ impl DownloadLock {
                 DownloadError::Storage(format!("Lock error: {}", e))
             }
         })?;
-        Ok(Self {
-            _file: file,
-            path,
-        })
+        Ok(Self { _file: file, path })
     }
 }
 
