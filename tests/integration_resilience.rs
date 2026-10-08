@@ -791,4 +791,3 @@ async fn resumed_request_sends_if_range_validator() {
     assert_eq!(std::fs::read(dir.join("file.bin")).unwrap(), body);
 }
 
-
