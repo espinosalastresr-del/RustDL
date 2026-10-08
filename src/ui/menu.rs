@@ -72,7 +72,7 @@ pub fn run(cfg: &mut Config) -> Result<Action> {
     }
 }
 
-fn new_download(cfg: &Config) -> Result<Action> {
+fn new_download(cfg: &mut Config) -> Result<Action> {
     clear_screen();
     print_section("NEW DOWNLOAD");
     println!("  Files are saved to: {}", cfg.download_dir.display());
