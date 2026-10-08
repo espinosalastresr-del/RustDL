@@ -252,8 +252,7 @@ async fn run(mut cli: Cli) -> Result<()> {
             sha1,
             md5,
         }) => {
-            let has_any =
-                sha256.is_some() || sha512.is_some() || sha1.is_some() || md5.is_some();
+            let has_any = sha256.is_some() || sha512.is_some() || sha1.is_some() || md5.is_some();
             if let Some(h) = sha256 {
                 verify_file(&file, HashAlgo::Sha256, &h)?;
                 println!("SHA-256 OK");
@@ -307,12 +306,7 @@ async fn run(mut cli: Cli) -> Result<()> {
     Ok(())
 }
 
-async fn do_download(
-    cfg: &Config,
-    cli: &Cli,
-    url: &str,
-    cancel: Arc<AtomicBool>,
-) -> Result<()> {
+async fn do_download(cfg: &Config, cli: &Cli, url: &str, cancel: Arc<AtomicBool>) -> Result<()> {
     let engine = Engine::new(cfg.clone())?;
     let basic_auth = cli.basic_auth.as_ref().and_then(|s| {
         let mut p = s.splitn(2, ':');
