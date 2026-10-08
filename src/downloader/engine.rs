@@ -99,10 +99,8 @@ impl Engine {
         let output_path = opts.output_dir.join(&filename);
         let part = part_path(&output_path);
 
-        if output_path.exists() && !opts.overwrite && !opts.restart {
-            if !part.exists() {
-                return Err(DownloadError::FileExists(output_path));
-            }
+        if output_path.exists() && !opts.overwrite && !opts.restart && !part.exists() {
+            return Err(DownloadError::FileExists(output_path));
         }
 
         if let Some(total) = remote.content_length {
@@ -398,10 +396,8 @@ impl Engine {
                     return Err(e);
                 }
                 if let Some(ref crh) = cr {
-                    if let Ok((_, _, total)) = parse_content_range(crh) {
-                        if let Some(t) = total {
-                            state.total_size = Some(t);
-                        }
+                    if let Ok((_, _, Some(t))) = parse_content_range(crh) {
+                        state.total_size = Some(t);
                     }
                 }
             } else if status == 200 {
@@ -584,6 +580,7 @@ impl Engine {
             let _f = std::fs::OpenOptions::new()
                 .create(true)
                 .write(true)
+                .truncate(false)
                 .open(&state.part_path)?;
         }
 
@@ -602,7 +599,6 @@ impl Engine {
         ));
         // Do not derive progress from file_size(): ranged writes may create holes.
 
-        let start_time = Instant::now();
         let client = self.client.clone();
         let url = state.final_url.clone().unwrap_or_else(|| state.url.clone());
         let headers = opts.headers.clone();
@@ -773,7 +769,7 @@ impl Engine {
                     state.segments = updated.clone();
                     state.downloaded = state.segments.iter().map(|s| s.downloaded).sum();
                     {
-                        let mut f = file.lock().await;
+                        let f = file.lock().await;
                         f.sync_data().await?;
                     }
                     state.save()?;
