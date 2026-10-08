@@ -776,6 +776,10 @@ impl Engine {
                     // worker so a later failure never discards earlier progress.
                     state.segments = updated.clone();
                     state.downloaded = state.segments.iter().map(|s| s.downloaded).sum();
+                    {
+                        let mut f = file.lock().await;
+                        f.sync_data().await?;
+                    }
                     state.save()?;
                 }
                 Ok(Err(e)) => {
