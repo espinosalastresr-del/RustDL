@@ -772,6 +772,11 @@ impl Engine {
                     if let Some(s) = updated.iter_mut().find(|s| s.index == seg.index) {
                         *s = seg;
                     }
+                    // Persist each completed segment before waiting on the next
+                    // worker so a later failure never discards earlier progress.
+                    state.segments = updated.clone();
+                    state.downloaded = state.segments.iter().map(|s| s.downloaded).sum();
+                    state.save()?;
                 }
                 Ok(Err(e)) => {
                     state.segments = updated;
