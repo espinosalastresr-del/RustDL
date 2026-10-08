@@ -1,15 +1,14 @@
 //! rustdl CLI — thin frontend over the `rustdl` library.
 
 use clap::{CommandFactory, Parser};
-use rustdl::config::{parse_size, Config, Profile};
+use rustdl::config::{parse_size, Config};
 use rustdl::downloader::engine::{human_bytes, DownloadOptions, Engine, ProgressSnapshot};
 use rustdl::errors::{DownloadError, Result};
 use rustdl::queue::{Queue, QueueStatus};
 use rustdl::storage::state::find_incomplete;
 use rustdl::ui;
 use rustdl::verification::checksum::{hash_file, verify_file, HashAlgo};
-use rustdl::{logging, DownloadStatus};
-use std::path::PathBuf;
+use rustdl::logging;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::watch;
