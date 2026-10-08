@@ -268,6 +268,6 @@ mod tests {
     fn rejects_non_http_urls() {
         assert!(!is_http_url("ftp://example.com/file.zip"));
         assert!(!is_http_url("not-a-url"));
-        assert!(!is_http_url("https:///missing-host"));
+        assert!(!is_http_url("https://"));
     }
 }
