@@ -167,17 +167,14 @@ pub fn validate_partial(
             message: "Expected 206 Partial Content for resume".into(),
         });
     }
-    if let Some(cr) = content_range {
-        // bytes START-END/TOTAL
-        let parts: Vec<&str> = cr.trim_start_matches("bytes ").split(|c| c == '-' || c == '/').collect();
-        if parts.len() >= 1 {
-            if let Ok(start) = parts[0].parse::<u64>() {
-                if start != requested_offset {
-                    return Err(DownloadError::InvalidRange);
-                }
-            }
-        }
+    let cr = content_range.ok_or(DownloadError::InvalidRange)?;
+    let (start, end, _) = crate::downloader::range::parse_content_range(cr)?;
+    if start != requested_offset || end < start {
+        return Err(DownloadError::InvalidRange);
     }
-    let _ = content_length_header;
+    let expected_len = end - start + 1;
+    if content_length_header != Some(expected_len) {
+        return Err(DownloadError::InvalidRange);
+    }
     Ok(())
 }
