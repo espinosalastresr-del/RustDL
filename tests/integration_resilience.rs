@@ -98,7 +98,7 @@ fn handle(
     } else {
         write!(
             stream,
-            "HTTP/1.1 200 OK\r\nAccept-Ranges: bytes\r\nETag: "v1"\r\nContent-Length: {}\r\n\r\n",
+            "HTTP/1.1 200 OK\r\nAccept-Ranges: bytes\r\nETag: \"v1\"\r\nContent-Length: {}\r\n\r\n",
             body.len()
         )?;
         if !is_head {
