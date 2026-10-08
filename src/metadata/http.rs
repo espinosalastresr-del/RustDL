@@ -173,8 +173,10 @@ pub fn validate_partial(
         return Err(DownloadError::InvalidRange);
     }
     let expected_len = end - start + 1;
-    if content_length_header != Some(expected_len) {
-        return Err(DownloadError::InvalidRange);
+    if let Some(content_length) = content_length_header {
+        if content_length != expected_len {
+            return Err(DownloadError::InvalidRange);
+        }
     }
     Ok(())
 }
