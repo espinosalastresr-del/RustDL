@@ -33,7 +33,11 @@ impl MockServer {
         });
         // Give server a moment
         thread::sleep(Duration::from_millis(50));
-        Self { addr, hits, if_range_seen }
+        Self {
+            addr,
+            hits,
+            if_range_seen,
+        }
     }
 
     fn url(&self, path: &str) -> String {
@@ -52,7 +56,10 @@ fn handle(
     let req = String::from_utf8_lossy(&buf[..n]);
     let is_head = req.starts_with("HEAD ");
     let range = req.lines().find(|l| l.to_lowercase().starts_with("range:"));
-    if req.lines().any(|l| l.to_lowercase().starts_with("if-range:")) {
+    if req
+        .lines()
+        .any(|l| l.to_lowercase().starts_with("if-range:"))
+    {
         if_range_seen.fetch_add(1, Ordering::SeqCst);
     }
 
@@ -728,10 +735,7 @@ async fn resumed_request_sends_if_range_validator() {
 
     let body: &'static [u8] = b"if-range-integrity-payload";
     let server = MockServer::spawn(body, 0);
-    let dir = std::env::temp_dir().join(format!(
-        "rustdl-if-range-{}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("rustdl-if-range-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let part = dir.join("file.bin.part");
@@ -775,7 +779,11 @@ async fn resumed_request_sends_if_range_validator() {
         json: false,
     };
     let result = engine
-        .download(opts, None, Arc::new(std::sync::atomic::AtomicBool::new(false)))
+        .download(
+            opts,
+            None,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
         .await
         .expect("resume with validator");
     assert_eq!(result.status, rustdl::DownloadStatus::Completed);
