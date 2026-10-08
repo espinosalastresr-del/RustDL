@@ -1,6 +1,6 @@
 //! Filesystem helpers: space check, sanitize names, ensure dirs.
 
-use crate::errors::{DownloadError, Result};
+use crate::errors::Result;
 use std::path::{Path, PathBuf};
 
 /// Sanitize filename: strip path components, remove dangerous chars.
@@ -83,7 +83,6 @@ pub fn available_space(path: &Path) -> Result<u64> {
     }
     #[cfg(unix)]
     {
-        use std::os::unix::fs::MetadataExt;
         // Prefer statvfs via libc if available; fallback to a conservative check
         match fs2::available_space(&p) {
             Ok(s) => Ok(s),
@@ -132,7 +131,7 @@ pub fn filename_from_content_disposition(header: &str) -> Option<String> {
         let rest = &header[idx + 9..];
         let rest = rest.trim_start_matches(|c: char| c == '"' || c.is_whitespace());
         let name = rest
-            .split(|c| c == '"' || c == ';' || c == '\n')
+            .split(['"', ';', '\n'])
             .next()
             .unwrap_or("")
             .trim();
