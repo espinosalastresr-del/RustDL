@@ -3,7 +3,7 @@
 use crate::errors::{DownloadError, Result};
 use md5::{Digest as Md5Digest, Md5};
 use sha1::{Digest as Sha1Digest, Sha1};
-use sha2::{Digest, Sha256, Sha512};
+use sha2::{Sha256, Sha512};
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
