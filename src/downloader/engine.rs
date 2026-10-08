@@ -213,10 +213,7 @@ impl Engine {
             && !self.config.data_saver;
 
         let result = if use_multi {
-            info!(
-                "Using {} parallel connections",
-                self.config.connections
-            );
+            info!("Using {} parallel connections", self.config.connections);
             self.download_multi(&mut state, &remote, &opts, progress_tx, cancel)
                 .await
         } else {
@@ -230,10 +227,8 @@ impl Engine {
                 if let Some(expected) = state.total_size {
                     if actual != expected {
                         state.status = DownloadStatus::Failed;
-                        state.error = Some(format!(
-                            "Incomplete: expected {}, got {}",
-                            expected, actual
-                        ));
+                        state.error =
+                            Some(format!("Incomplete: expected {}, got {}", expected, actual));
                         state.save()?;
                         return Err(DownloadError::Incomplete { expected, actual });
                     }
@@ -603,11 +598,7 @@ impl Engine {
         ));
 
         let global_downloaded = Arc::new(AtomicU64::new(
-            state
-                .segments
-                .iter()
-                .map(|s| s.downloaded)
-                .sum::<u64>(),
+            state.segments.iter().map(|s| s.downloaded).sum::<u64>(),
         ));
         // Do not derive progress from file_size(): ranged writes may create holes.
 
@@ -640,7 +631,7 @@ impl Engine {
             let retry_cfg = retry_cfg.clone();
             let validator = validator.clone();
             let mut seg = seg;
-                        handles.push(tokio::spawn(async move {
+            handles.push(tokio::spawn(async move {
                 let mut backoff = Backoff::new(retry_cfg);
                 loop {
                     if cancel.load(Ordering::SeqCst) {
@@ -808,7 +799,9 @@ impl Engine {
         }
         let meta_len = file_size(&state.part_path)?;
         if meta_len > total {
-            let f = std::fs::OpenOptions::new().write(true).open(&state.part_path)?;
+            let f = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&state.part_path)?;
             f.set_len(total)?;
         }
         state.downloaded = total.min(file_size(&state.part_path)?);
