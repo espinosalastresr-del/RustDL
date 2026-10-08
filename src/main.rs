@@ -296,12 +296,140 @@ async fn run(mut cli: Cli) -> Result<()> {
             if let Some(ref url) = cli.url {
                 do_download(&cfg, &cli, url, cancel).await?;
             } else {
-                let mut cmd = Cli::command();
-                cmd.print_help().ok();
-                println!();
+                run_interactive(&mut cli, &mut cfg, cancel).await?;
             }
         }
     }
+    Ok(())
+}
+
+async fn run_interactive(
+    cli: &mut Cli,
+    cfg: &mut Config,
+    cancel: Arc<AtomicBool>,
+) -> Result<()> {
+    loop {
+        match ui::menu::run(cfg)? {
+            ui::menu::Action::NewDownload { url, output } => {
+                cancel.store(false, Ordering::SeqCst);
+                let previous_output = cli.output.clone();
+                if output.is_some() {
+                    cli.output = output;
+                }
+                let result = do_download(cfg, cli, &url, cancel.clone()).await;
+                cli.output = previous_output;
+                match result {
+                    Ok(()) => {
+                        println!();
+                        println!("  Download completed successfully.");
+                    }
+                    Err(DownloadError::Cancelled) => {
+                        println!();
+                        println!("  Download paused. Progress was saved and can be resumed.");
+                        cancel.store(false, Ordering::SeqCst);
+                    }
+                    Err(e) => {
+                        eprintln!();
+                        eprintln!("  Download failed: {}", e);
+                    }
+                }
+                interactive_pause()?;
+            }
+            ui::menu::Action::ResumeAll => {
+                cancel.store(false, Ordering::SeqCst);
+                let items = find_incomplete(&cfg.download_dir)?;
+                if items.is_empty() {
+                    println!();
+                    println!("  No incomplete downloads.");
+                } else {
+                    for state in items {
+                        if state.url.is_empty() {
+                            eprintln!("  Skipping {}: no URL in saved state.", state.id);
+                            continue;
+                        }
+                        println!();
+                        println!("  Resuming: {}", state.filename);
+                        match do_download(cfg, cli, &state.url, cancel.clone()).await {
+                            Ok(()) => {}
+                            Err(DownloadError::Cancelled) => {
+                                println!("  Paused. Progress has been saved.");
+                                cancel.store(false, Ordering::SeqCst);
+                                break;
+                            }
+                            Err(e) => {
+                                eprintln!("  Failed {}: {}", state.filename, e);
+                            }
+                        }
+                    }
+                }
+                interactive_pause()?;
+            }
+            ui::menu::Action::List => {
+                let items = find_incomplete(&cfg.download_dir)?;
+                println!();
+                if items.is_empty() {
+                    println!("  No incomplete downloads.");
+                } else {
+                    println!("  ID                                  PROGRESS   DOWNLOADED   FILE");
+                    println!("  ────────────────────────────────────────────────────────────────");
+                    for state in items {
+                        println!(
+                            "  {:<34} {:>7.1}%  {:>11}   {}",
+                            state.id,
+                            state.progress_pct(),
+                            human_bytes(state.downloaded),
+                            state.filename
+                        );
+                    }
+                }
+                interactive_pause()?;
+            }
+            ui::menu::Action::Verify(file) => {
+                println!();
+                match hash_file(&file, HashAlgo::Sha256) {
+                    Ok(hash) => println!("  SHA-256: {}", hash),
+                    Err(e) => eprintln!("  Verification failed: {}", e),
+                }
+                interactive_pause()?;
+            }
+            ui::menu::Action::History => {
+                println!();
+                let path = Config::history_path();
+                if !path.exists() {
+                    println!("  No download history.");
+                } else {
+                    let content = std::fs::read_to_string(&path)?;
+                    let mut found = false;
+                    for line in content.lines().rev().take(20) {
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+                            found = true;
+                            println!(
+                                "  {:<34} {:<28} {:?}",
+                                v["id"].as_str().unwrap_or("?"),
+                                v["filename"].as_str().unwrap_or("?"),
+                                v["status"]
+                            );
+                        }
+                    }
+                    if !found {
+                        println!("  No download history.");
+                    }
+                }
+                interactive_pause()?;
+            }
+            ui::menu::Action::Settings => {}
+            ui::menu::Action::Exit => return Ok(()),
+        }
+    }
+}
+
+fn interactive_pause() -> Result<()> {
+    use std::io::{self, Write};
+
+    print!("  Press Enter to return to the main panel...");
+    io::stdout().flush().map_err(DownloadError::Io)?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).map_err(DownloadError::Io)?;
     Ok(())
 }
 
