@@ -32,7 +32,11 @@ pub fn run(cfg: &mut Config) -> Result<Action> {
         println!("  Profile  : {}", cfg.profile);
         println!(
             "  Mode     : {}",
-            if cfg.data_saver {\n                "Data saver"\n            } else {\n                "Normal"\n            }
+            if cfg.data_saver {
+                "Data saver"
+            } else {
+                "Normal"
+            }
         );
         println!();
         println!("  ┌──────────────────────────────────────────────┐");
@@ -210,7 +214,8 @@ fn prompt(label: &str) -> Result<Option<String>> {
     print!("{}", label);
     io::stdout().flush().map_err(DownloadError::Io)?;
     let mut input = String::new();
-    let read = io::stdin()\n        .read_line(&mut input)\n        .map_err(DownloadError::Io)?;
+    let read = io::stdin()
+        .read_line(&mut input)
     if read == 0 {
         return Ok(None);
     }
@@ -244,7 +249,11 @@ fn print_section(title: &str) {
 }
 
 fn on_off(value: bool) -> &'static str {
-    if value {\n        "ON"\n    } else {\n        "OFF"\n    }
+    if value {
+        "ON"
+    } else {
+        "OFF"
+    }
 }
 
 #[cfg(test)]
