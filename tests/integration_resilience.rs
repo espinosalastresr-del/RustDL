@@ -487,11 +487,12 @@ fn sha256_hex(body: &[u8]) -> String {
 
 #[tokio::test]
 async fn interrupted_single_stream_resumes_with_sha256_integrity() {
-    let body: &'static [u8] = Box::leak(
+    let body: &'static [u8] = Box::leak(Box::new(
         (0..(2 * 1024 * 1024))
             .map(|i| (i as u8).wrapping_mul(31).wrapping_add(7))
             .collect::<Vec<_>>(),
-    );
+    ))
+    .as_slice();
     let server = MockServer::spawn(body, 0);
     let dir =
         std::env::temp_dir().join(format!("rustdl-interrupted-single-{}", std::process::id()));
@@ -528,7 +529,15 @@ async fn interrupted_single_stream_resumes_with_sha256_integrity() {
         json: false,
     };
     let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let (tx, mut rx) = tokio::sync::watch::channel(None);
+    let initial = rustdl::ProgressSnapshot {
+        downloaded: 0,
+        total: Some(body.len() as u64),
+        speed: 0.0,
+        avg_speed: 0.0,
+        retries: 0,
+        status: "pending".into(),
+    };
+    let (tx, mut rx) = tokio::sync::watch::channel(initial);
     let cancel_first = cancel.clone();
     let engine_first = engine.clone();
     let first =
@@ -539,9 +548,7 @@ async fn interrupted_single_stream_resumes_with_sha256_integrity() {
         if rx.changed().await.is_err() {
             break;
         }
-        if let Some(snapshot) = rx.borrow().as_ref() {
-            observed = snapshot.downloaded;
-        }
+        observed = rx.borrow().downloaded;
     }
     assert!(
         observed > 0,
@@ -595,11 +602,12 @@ async fn interrupted_single_stream_resumes_with_sha256_integrity() {
 
 #[tokio::test]
 async fn partially_written_multi_segments_resume_with_sha256_integrity() {
-    let body: &'static [u8] = Box::leak(
+    let body: &'static [u8] = Box::leak(Box::new(
         (0..(1024 * 1024))
             .map(|i| (i as u8).wrapping_mul(17).wrapping_add(13))
             .collect::<Vec<_>>(),
-    );
+    ))
+    .as_slice();
     let server = MockServer::spawn(body, 0);
     let dir = std::env::temp_dir().join(format!("rustdl-interrupted-multi-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
