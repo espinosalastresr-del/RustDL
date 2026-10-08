@@ -98,7 +98,7 @@ mod tests {
     fn retry_after_parses_http_date() {
         let future = (Utc::now() + chrono::Duration::seconds(30)).to_rfc2822();
         let parsed = parse_retry_after(&future).unwrap();
-        assert!(parsed <= 30 && parsed >= 28);
+        assert!((28..=30).contains(&parsed));
     }
 
     #[test]
