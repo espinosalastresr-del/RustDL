@@ -338,7 +338,6 @@ async fn multi_connection_download_tracks_segments_not_file_length() {
     assert_eq!(std::fs::read(dir.join("multi.bin")).unwrap(), body);
 }
 
-
 #[test]
 fn resume_decision_rejects_changed_remote_representation() {
     use rustdl::downloader::resume::{decide_resume, ResumeDecision};
