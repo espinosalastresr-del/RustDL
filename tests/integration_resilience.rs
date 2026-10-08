@@ -790,4 +790,3 @@ async fn resumed_request_sends_if_range_validator() {
     assert!(server.if_range_seen.load(Ordering::SeqCst) >= 1);
     assert_eq!(std::fs::read(dir.join("file.bin")).unwrap(), body);
 }
-
