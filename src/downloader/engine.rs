@@ -334,6 +334,9 @@ impl Engine {
                     return Err(DownloadError::ResumeUnsupported);
                 }
                 req = req.header("Range", range_header(offset));
+                if let Some(v) = state.etag.as_deref().or(state.last_modified.as_deref()) {
+                    req = req.header("If-Range", v);
+                }
             }
 
             let resp = match req.send().await {
@@ -682,14 +685,32 @@ impl Engine {
                         tokio::time::sleep(delay).await;
                         continue;
                     }
-                    if status != 206 && status != 200 {
+                    if status != 206 {
                         return Err(DownloadError::Http {
                             status,
-                            message: format!("segment {}", seg.index),
+                            message: format!("segment {} requires 206 Partial Content", seg.index),
                         });
                     }
-                    if status == 200 && cur > 0 {
+
+                    let cr = resp
+                        .headers()
+                        .get(CONTENT_RANGE)
+                        .and_then(|v| v.to_str().ok());
+                    let cl = resp
+                        .headers()
+                        .get(CONTENT_LENGTH)
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|s| s.parse::<u64>().ok());
+                    validate_partial(status, cr, cur, cl)?;
+                    let (range_start, range_end, range_total) =
+                        parse_content_range(cr.ok_or(DownloadError::InvalidRange)?)?;
+                    if range_start != cur || range_end > seg.end {
                         return Err(DownloadError::InvalidRange);
+                    }
+                    if let Some(t) = range_total {
+                        if t != total {
+                            return Err(DownloadError::InvalidRange);
+                        }
                     }
 
                     let mut stream = resp.bytes_stream();
@@ -785,16 +806,22 @@ impl Engine {
             // Retry incomplete via single-connection path from current size
             // Recompute downloaded as contiguous prefix for single resume fallback
             warn!("Some segments incomplete; falling back to single-connection resume");
-            // Compact: rewrite file is complex; mark remaining via single from min incomplete
-            let min_incomplete = state
-                .segments
-                .iter()
-                .filter(|s| !s.completed)
-                .map(|s| s.start + s.downloaded)
-                .min()
-                .unwrap_or(state.downloaded);
-            // Truncate part to contiguous downloaded region for single resume safety
-            let contiguous = min_incomplete;
+            // Only the prefix covered by fully completed segments plus the
+            // contiguous bytes of the first incomplete segment is safe to keep.
+            let mut sorted = state.segments.clone();
+            sorted.sort_by_key(|s| s.start);
+            let mut contiguous = 0u64;
+            for seg in sorted {
+                if seg.start != contiguous {
+                    break;
+                }
+                if seg.completed {
+                    contiguous = seg.end.saturating_add(1);
+                } else {
+                    contiguous = seg.start.saturating_add(seg.downloaded);
+                    break;
+                }
+            }
             let f = std::fs::OpenOptions::new().write(true).open(&state.part_path)?;
             f.set_len(contiguous)?;
             state.downloaded = contiguous;
