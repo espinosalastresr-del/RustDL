@@ -476,7 +476,7 @@ async fn do_download(cfg: &Config, cli: &Cli, url: &str, cancel: Arc<AtomicBool>
         status: "starting".into(),
     });
 
-    let _ui = ui::progress::spawn_progress_ui(rx, cli.quiet, cli.silent, cli.json);
+    let _ui = ui::progress::spawn_progress_ui(rx, cli.quiet, cli.silent, cli.json, cancel.clone());
     let result = engine.download(opts, Some(tx), cancel).await;
 
     match result {
