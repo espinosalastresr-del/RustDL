@@ -1,0 +1,47 @@
+name: Sync Cargo.lock
+
+on:
+  push:
+    branches:
+      - engine-hardening
+    paths:
+      - "Cargo.toml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cargo-lock-sync
+  cancel-in-progress: false
+
+jobs:
+  sync-lockfile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: engine-hardening
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Regenerate lockfile
+        run: cargo generate-lockfile
+
+      - name: Verify locked dependency resolution
+        run: cargo metadata --locked --format-version 1 --no-deps > /dev/null
+
+      - name: Commit updated lockfile
+        run: |
+          if git diff --quiet -- Cargo.lock; then
+            echo "Cargo.lock is already synchronized."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock
+          git commit -m "fix: synchronize Cargo.lock with dependencies"
+          git push origin HEAD:engine-hardening
