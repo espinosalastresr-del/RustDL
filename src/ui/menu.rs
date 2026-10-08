@@ -500,8 +500,11 @@ fn render_downloads(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         ],
     )
     .header(
-        Row::new(vec!["ID", "FILE", "PROGRESS", "STATUS"])
-            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Row::new(vec!["ID", "FILE", "PROGRESS", "STATUS"]).style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
     )
     .block(Block::default().borders(Borders::ALL).title(" Downloads "))
     .highlight_style(Style::default().bg(Color::DarkGray))
