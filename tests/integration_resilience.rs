@@ -481,7 +481,6 @@ fn validate_partial_rejects_wrong_content_length() {
     assert!(validate_partial(206, Some("bytes 10-19/100"), 10, Some(11)).is_err());
 }
 
-
 fn sha256_hex(body: &[u8]) -> String {
     hex::encode(Sha256::digest(body))
 }
