@@ -579,19 +579,18 @@ impl Engine {
             state.segments = plan_segments(total, self.config.connections);
         }
 
-        // Pre-allocate part file to total size if needed
+        // Never use preallocation as a progress signal. A preallocated/sparse
+        // file can have the final length while many ranges are still missing.
         ensure_parent_dir(&state.part_path)?;
         {
-            let f = std::fs::OpenOptions::new()
+            let _f = std::fs::OpenOptions::new()
                 .create(true)
                 .write(true)
                 .open(&state.part_path)?;
-            if file_size(&state.part_path)? < total {
-                f.set_len(total)?;
-            }
         }
 
-        // Rebuild segment progress from disk is approximate; track in state
+        // Segment metadata is the source of truth for multi-connection progress.
+        state.downloaded = state.segments.iter().map(|s| s.downloaded).sum();
         let file = Arc::new(Mutex::new(
             tokio::fs::OpenOptions::new()
                 .write(true)
@@ -607,16 +606,7 @@ impl Engine {
                 .map(|s| s.downloaded)
                 .sum::<u64>(),
         ));
-        // If segments empty downloaded, estimate from file size of completed ranges
-        if global_downloaded.load(Ordering::SeqCst) == 0 {
-            let done: u64 = state
-                .segments
-                .iter()
-                .filter(|s| s.completed)
-                .map(|s| s.end - s.start + 1)
-                .sum();
-            global_downloaded.store(done, Ordering::SeqCst);
-        }
+        // Do not derive progress from file_size(): ranged writes may create holes.
 
         let start_time = Instant::now();
         let client = self.client.clone();
@@ -789,9 +779,7 @@ impl Engine {
         state.downloaded = total.min(file_size(&state.part_path)?);
         state.save()?;
 
-        if state.segments.iter().all(|s| s.completed)
-            || state.downloaded >= total
-        {
+        if state.segments.iter().all(|s| s.completed) {
             Ok(())
         } else {
             // Retry incomplete via single-connection path from current size
