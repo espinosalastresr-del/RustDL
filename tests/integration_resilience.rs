@@ -43,7 +43,10 @@ fn handle(mut stream: TcpStream, body: &[u8], fail: bool) -> std::io::Result<()>
     let range = req.lines().find(|l| l.to_lowercase().starts_with("range:"));
 
     if fail {
-        write!(stream, "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n")?;
+        write!(
+            stream,
+            "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n"
+        )?;
         return Ok(());
     }
 
@@ -167,10 +170,16 @@ async fn retries_on_503_then_succeeds() {
         json: false,
     };
     let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let state = engine.download(opts, None, cancel).await.expect("retry download");
+    let state = engine
+        .download(opts, None, cancel)
+        .await
+        .expect("retry download");
     assert_eq!(state.status, rustdl::DownloadStatus::Completed);
     assert!(server.hits.load(Ordering::SeqCst) >= 3);
-    assert_eq!(std::fs::read(dir.as_path().join("retry.bin")).unwrap(), body);
+    assert_eq!(
+        std::fs::read(dir.as_path().join("retry.bin")).unwrap(),
+        body
+    );
 }
 
 #[tokio::test]
@@ -267,7 +276,6 @@ fn sanitize_and_parse_size() {
     assert_eq!(parse_size("2M").unwrap(), 2 * 1024 * 1024);
 }
 
-
 #[test]
 fn partial_response_validation_rejects_inconsistent_ranges() {
     use rustdl::metadata::http::validate_partial;
@@ -280,14 +288,10 @@ fn partial_response_validation_rejects_inconsistent_ranges() {
 
 #[tokio::test]
 async fn multi_connection_download_tracks_segments_not_file_length() {
-    let body: &'static [u8] =
-        b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    let body: &'static [u8] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
     let server = MockServer::spawn(body, 0);
     let dir = {
-        let d = std::env::temp_dir().join(format!(
-            "rustdl-multi-test-{}",
-            std::process::id()
-        ));
+        let d = std::env::temp_dir().join(format!("rustdl-multi-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
@@ -321,7 +325,10 @@ async fn multi_connection_download_tracks_segments_not_file_length() {
     };
     let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-    let state = engine.download(opts, None, cancel).await.expect("multi download");
+    let state = engine
+        .download(opts, None, cancel)
+        .await
+        .expect("multi download");
     assert_eq!(state.status, rustdl::DownloadStatus::Completed);
     assert_eq!(state.segments.len(), 4);
     assert!(state.segments.iter().all(|s| s.completed));
