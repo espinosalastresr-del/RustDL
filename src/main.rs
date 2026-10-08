@@ -362,6 +362,12 @@ async fn run_interactive(cli: &mut Cli, cfg: &mut Config, cancel: Arc<AtomicBool
                 queue.save()?;
                 println!("Queued {}.", item.id);
             }
+            ui::menu::Action::QueueRemove(id) => {
+                let mut queue = Queue::load()?;
+                queue.remove(&id)?;
+                queue.save()?;
+                println!("Removed queue item {}.", id);
+            }
             ui::menu::Action::QueueStart => {
                 let mut queue = Queue::load()?;
                 let pending: Vec<_> = queue
