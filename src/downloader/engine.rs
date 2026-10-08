@@ -734,7 +734,8 @@ impl Engine {
                                     }
                                 }
                                 let n = chunk.len() as u64;
-                                let remaining = seg.end.saturating_sub(seg.start + seg.downloaded) + 1;
+                                let remaining =
+                                    seg.end.saturating_sub(seg.start + seg.downloaded) + 1;
                                 if n > remaining {
                                     return Err(DownloadError::InvalidRange);
                                 }
