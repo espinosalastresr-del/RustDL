@@ -32,7 +32,7 @@ impl DownloadLock {
 
 impl Drop for DownloadLock {
     fn drop(&mut self) {
-        let _ = self._file.unlock();
+        let _ = fs2::FileExt::unlock(&self._file);
         let _ = std::fs::remove_file(&self.path);
     }
 }
