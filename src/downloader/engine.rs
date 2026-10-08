@@ -620,7 +620,8 @@ impl Engine {
         let idle_timeout = self.config.idle_timeout();
         let retry_cfg = self.config.retries.clone();
         let rate_limit = self.config.limit_rate;
-        
+        let validator = state.etag.clone().or_else(|| state.last_modified.clone());
+
         let mut handles = Vec::new();
         let segs: Vec<SegmentState> = state.segments.clone();
 
@@ -637,6 +638,7 @@ impl Engine {
             let cancel = cancel.clone();
             let global_downloaded = global_downloaded.clone();
             let retry_cfg = retry_cfg.clone();
+            let validator = validator.clone();
             let mut seg = seg;
                         handles.push(tokio::spawn(async move {
                 let mut backoff = Backoff::new(retry_cfg);
@@ -661,6 +663,9 @@ impl Engine {
                         req = req.bearer_auth(t);
                     }
                     req = req.header("Range", range_header_segment(cur, seg.end));
+                    if let Some(v) = validator.as_deref() {
+                        req = req.header("If-Range", v);
+                    }
 
                     let resp = match req.send().await {
                         Ok(r) => r,
