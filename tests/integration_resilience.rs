@@ -359,13 +359,13 @@ fn resume_decision_rejects_changed_remote_representation() {
     );
     state.downloaded = 7;
     state.total_size = Some(100);
-    state.etag = Some(""old"".into());
+    state.etag = Some("\"old\"".into());
     state.last_modified = Some("Wed, 01 Jan 2025 00:00:00 GMT".into());
 
     let remote = RemoteMeta {
         content_length: Some(100),
         accept_ranges: true,
-        etag: Some(""new"".into()),
+        etag: Some("\"new\"".into()),
         last_modified: state.last_modified.clone(),
         ..Default::default()
     };
