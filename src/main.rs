@@ -429,7 +429,7 @@ fn interactive_pause() -> Result<()> {
     print!("  Press Enter to return to the main panel...");
     io::stdout().flush().map_err(DownloadError::Io)?;
     let mut input = String::new();
-    io::stdin().read_line(&mut input).map_err(DownloadError::Io)?;
+    io::stdin()\n        .read_line(&mut input)\n        .map_err(DownloadError::Io)?;
     Ok(())
 }
 
