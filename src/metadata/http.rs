@@ -21,11 +21,7 @@ pub struct RemoteMeta {
     pub status: u16,
 }
 
-pub async fn probe(
-    client: &Client,
-    url: &str,
-    max_redirects: u32,
-) -> Result<RemoteMeta> {
+pub async fn probe(client: &Client, url: &str, max_redirects: u32) -> Result<RemoteMeta> {
     let parsed = Url::parse(url).map_err(|e| DownloadError::InvalidUrl(e.to_string()))?;
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
         return Err(DownloadError::InvalidUrl(format!(
