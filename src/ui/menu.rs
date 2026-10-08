@@ -469,7 +469,11 @@ fn render_dashboard(frame: &mut ratatui::Frame, area: Rect, app: &App, cfg: &Con
     ];
 
     frame.render_widget(
-        List::new(items).block(Block::default().borders(Borders::ALL).title(" Quick actions ")),
+        List::new(items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Quick actions "),
+        ),
         chunks[1],
     );
 
