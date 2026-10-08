@@ -337,3 +337,146 @@ async fn multi_connection_download_tracks_segments_not_file_length() {
     assert_eq!(state.downloaded, body.len() as u64);
     assert_eq!(std::fs::read(dir.join("multi.bin")).unwrap(), body);
 }
+
+
+#[test]
+fn resume_decision_rejects_changed_remote_representation() {
+    use rustdl::metadata::RemoteMeta;
+    use rustdl::storage::state::DownloadState;
+    use rustdl::downloader::resume::{decide_resume, ResumeDecision};
+
+    let dir = std::env::temp_dir().join(format!("rustdl-resume-change-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let part = dir.join("file.bin.part");
+    std::fs::write(&part, b"partial").unwrap();
+
+    let mut state = DownloadState::new(
+        "http://example.test/file.bin",
+        "file.bin",
+        dir.join("file.bin"),
+        part,
+    );
+    state.downloaded = 7;
+    state.total_size = Some(100);
+    state.etag = Some(""old"".into());
+    state.last_modified = Some("Wed, 01 Jan 2025 00:00:00 GMT".into());
+
+    let remote = RemoteMeta {
+        content_length: Some(100),
+        accept_ranges: true,
+        etag: Some(""new"".into()),
+        last_modified: state.last_modified.clone(),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        decide_resume(&state, &remote, false, false),
+        ResumeDecision::Abort
+    );
+    assert_eq!(
+        decide_resume(&state, &remote, true, false),
+        ResumeDecision::Resume
+    );
+}
+
+#[test]
+fn resume_decision_rejects_changed_size_without_validator() {
+    use rustdl::downloader::resume::{decide_resume, ResumeDecision};
+    use rustdl::metadata::RemoteMeta;
+    use rustdl::storage::state::DownloadState;
+
+    let dir = std::env::temp_dir().join(format!("rustdl-resume-size-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let part = dir.join("file.bin.part");
+    std::fs::write(&part, b"partial").unwrap();
+
+    let mut state = DownloadState::new(
+        "http://example.test/file.bin",
+        "file.bin",
+        dir.join("file.bin"),
+        part,
+    );
+    state.downloaded = 7;
+    state.total_size = Some(100);
+
+    let remote = RemoteMeta {
+        content_length: Some(101),
+        accept_ranges: true,
+        ..Default::default()
+    };
+
+    assert_eq!(
+        decide_resume(&state, &remote, false, false),
+        ResumeDecision::Abort
+    );
+}
+
+#[test]
+fn corrupted_state_file_falls_back_to_disk_progress() {
+    let body: &'static [u8] = b"corrupted-state-recovery-payload";
+    let server = MockServer::spawn(body, 0);
+    let dir = std::env::temp_dir().join(format!("rustdl-state-recovery-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let part = dir.join("recovery.bin.part");
+    let state_path = dir.join("recovery.bin.part.json");
+    std::fs::write(&part, &body[..10]).unwrap();
+    std::fs::write(&state_path, b"{ definitely not valid json").unwrap();
+
+    let mut cfg = rustdl::Config::default();
+    cfg.download_dir = dir.clone();
+    cfg.retries.max_retries = Some(3);
+    cfg.retries.initial_delay_ms = 10;
+    cfg.timeouts.idle_secs = 10;
+
+    let engine = rustdl::Engine::new(cfg).unwrap();
+    let opts = rustdl::DownloadOptions {
+        url: server.url("recovery.bin"),
+        output_dir: dir.clone(),
+        output_name: Some("recovery.bin".into()),
+        force_resume: false,
+        restart: false,
+        overwrite: true,
+        sha256: None,
+        sha512: None,
+        sha1: None,
+        md5: None,
+        headers: vec![],
+        basic_auth: None,
+        bearer: None,
+        yes: true,
+        quiet: true,
+        silent: true,
+        json: false,
+    };
+    let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+    let state = futures_test_download(&engine, opts, cancel).await;
+    assert_eq!(state.status, rustdl::DownloadStatus::Completed);
+    assert_eq!(std::fs::read(dir.join("recovery.bin")).unwrap(), body);
+}
+
+async fn futures_test_download(
+    engine: &rustdl::Engine,
+    opts: rustdl::DownloadOptions,
+    cancel: Arc<std::sync::atomic::AtomicBool>,
+) -> rustdl::DownloadState {
+    engine.download(opts, None, cancel).await.expect("download")
+}
+
+#[test]
+fn validate_partial_accepts_missing_content_length() {
+    use rustdl::metadata::http::validate_partial;
+
+    assert!(validate_partial(206, Some("bytes 10-19/100"), 10, None).is_ok());
+}
+
+#[test]
+fn validate_partial_rejects_wrong_content_length() {
+    use rustdl::metadata::http::validate_partial;
+
+    assert!(validate_partial(206, Some("bytes 10-19/100"), 10, Some(11)).is_err());
+}
