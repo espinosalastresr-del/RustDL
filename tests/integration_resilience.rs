@@ -1,3 +1,5 @@
+#![allow(clippy::field_reassign_with_default)]
+
 //! Integration / resilience tests with a local HTTP mock server.
 
 use std::io::{Read, Write};
