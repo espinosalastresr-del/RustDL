@@ -1,15 +1,66 @@
-//! Terminal progress display.
+//! Live terminal download monitor with safe pause handling.
 
 use crate::downloader::engine::{human_bytes, ProgressSnapshot};
-use indicatif::{ProgressBar, ProgressStyle};
-use std::time::Duration;
+use crossterm::{
+    event::{self, Event, KeyCode, KeyEventKind},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use ratatui::{
+    backend::CrosstermBackend,
+    layout::{Constraint, Direction, Layout},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Gauge, Paragraph, Wrap},
+    Terminal,
+};
+use std::{
+    io::{self, Stdout},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 use tokio::sync::watch;
+
+struct TerminalGuard {
+    terminal: Terminal<CrosstermBackend<Stdout>>,
+}
+
+impl TerminalGuard {
+    fn new() -> io::Result<Self> {
+        enable_raw_mode()?;
+        let mut stdout = io::stdout();
+        if let Err(error) = execute!(stdout, EnterAlternateScreen) {
+            let _ = disable_raw_mode();
+            return Err(error);
+        }
+        match Terminal::new(CrosstermBackend::new(stdout)) {
+            Ok(terminal) => Ok(Self { terminal }),
+            Err(error) => {
+                let _ = execute!(io::stdout(), LeaveAlternateScreen);
+                let _ = disable_raw_mode();
+                Err(error)
+            }
+        }
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+        let _ = execute!(self.terminal.backend_mut(), LeaveAlternateScreen);
+        let _ = self.terminal.show_cursor();
+    }
+}
 
 pub fn spawn_progress_ui(
     mut rx: watch::Receiver<ProgressSnapshot>,
     quiet: bool,
     silent: bool,
     json: bool,
+    cancel: Arc<AtomicBool>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         if silent {
@@ -18,15 +69,17 @@ pub fn spawn_progress_ui(
         if json {
             while rx.changed().await.is_ok() {
                 let p = rx.borrow().clone();
-                let obj = serde_json::json!({
-                    "downloaded": p.downloaded,
-                    "total": p.total,
-                    "speed": p.speed,
-                    "avg_speed": p.avg_speed,
-                    "retries": p.retries,
-                    "status": p.status,
-                });
-                println!("{}", obj);
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "downloaded": p.downloaded,
+                        "total": p.total,
+                        "speed": p.speed,
+                        "avg_speed": p.avg_speed,
+                        "retries": p.retries,
+                        "status": p.status,
+                    })
+                );
             }
             return;
         }
@@ -34,52 +87,109 @@ pub fn spawn_progress_ui(
             return;
         }
 
-        let pb = ProgressBar::new(0);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("{msg}\n{bar:40.cyan/blue} {percent}%\n{bytes}/{total_bytes}  Speed: {bytes_per_sec}  ETA: {eta}  Retries: {msg}")
-                .unwrap_or_else(|_| ProgressStyle::default_bar())
-                .progress_chars("█░"),
-        );
-
-        loop {
-            tokio::select! {
-                changed = rx.changed() => {
-                    if changed.is_err() {
-                        break;
-                    }
-                    let p = rx.borrow().clone();
-                    if let Some(total) = p.total {
-                        pb.set_length(total);
-                    }
-                    pb.set_position(p.downloaded);
-                    let eta = if p.avg_speed > 0.0 {
-                        if let Some(t) = p.total {
-                            let left = t.saturating_sub(p.downloaded) as f64;
-                            let secs = left / p.avg_speed;
-                            format_eta(secs)
-                        } else {
-                            "—".into()
-                        }
-                    } else {
-                        "—".into()
-                    };
-                    pb.set_message(format!(
-                        "Speed: {}/s  Avg: {}/s  ETA: {}  Retries: {}",
-                        human_bytes(p.speed as u64),
-                        human_bytes(p.avg_speed as u64),
-                        eta,
-                        p.retries
-                    ));
+        let mut terminal = match TerminalGuard::new() {
+            Ok(guard) => guard,
+            Err(_) => {
+                // Fall back to a simple progress line if the terminal cannot be controlled.
+                while rx.changed().await.is_ok() {
+                    print_progress_line(&rx.borrow().clone());
                 }
-                _ = tokio::time::sleep(Duration::from_millis(200)) => {}
+                eprintln!();
+                return;
             }
+        };
+
+        let mut latest = rx.borrow().clone();
+        let mut disconnected = false;
+        loop {
+            if event::poll(Duration::from_millis(50)).unwrap_or(false) {
+                if let Ok(Event::Key(key)) = event::read() {
+                    if key.kind == KeyEventKind::Press
+                        && matches!(key.code, KeyCode::Char('p') | KeyCode::Esc)
+                    {
+                        cancel.store(true, Ordering::SeqCst);
+                        latest.status = "pausing — saving progress".into();
+                    }
+                }
+            }
+
+            match rx.has_changed() {
+                Ok(true) => latest = rx.borrow_and_update().clone(),
+                Ok(false) => {}
+                Err(_) => disconnected = true,
+            }
+
+            let p = latest.clone();
+            let _ = terminal.terminal.draw(|frame| {
+                let area = frame.size();
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .margin(2)
+                    .constraints([
+                        Constraint::Length(3),
+                        Constraint::Length(3),
+                        Constraint::Length(5),
+                        Constraint::Min(4),
+                        Constraint::Length(3),
+                    ])
+                    .split(area);
+
+                let title = Paragraph::new(Line::from(vec![
+                    Span::styled(" RustDL ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                    Span::raw(" / DOWNLOAD MONITOR"),
+                ]))
+                .block(Block::default().borders(Borders::ALL).title(" Transfer "));
+                frame.render_widget(title, chunks[0]);
+
+                let (ratio, label) = match p.total {
+                    Some(total) if total > 0 => {
+                        let ratio = (p.downloaded as f64 / total as f64).clamp(0.0, 1.0);
+                        (ratio, format!("{:.1}%  ·  {} / {}", ratio * 100.0, human_bytes(p.downloaded), human_bytes(total)))
+                    }
+                    _ => (0.0, format!("{} downloaded  ·  total size unknown", human_bytes(p.downloaded))),
+                };
+                let gauge = Gauge::default()
+                    .block(Block::default().borders(Borders::ALL).title(" Progress "))
+                    .gauge_style(Style::default().fg(Color::Cyan).bg(Color::DarkGray))
+                    .ratio(ratio)
+                    .label(label);
+                frame.render_widget(gauge, chunks[1]);
+
+                let eta = match p.total {
+                    Some(total) if p.avg_speed > 0.0 => format_duration(total.saturating_sub(p.downloaded) as f64 / p.avg_speed),
+                    _ => "—".into(),
+                };
+                let metrics = vec![
+                    Line::from(vec![Span::styled("Current speed  ", Style::default().fg(Color::Gray)), Span::styled(format!("{}/s", human_bytes(p.speed as u64)), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))]),
+                    Line::from(vec![Span::styled("Average speed  ", Style::default().fg(Color::Gray)), Span::raw(format!("{}/s", human_bytes(p.avg_speed as u64)))]),
+                    Line::from(vec![Span::styled("Time remaining ", Style::default().fg(Color::Gray)), Span::raw(eta)]),
+                    Line::from(vec![Span::styled("Retries        ", Style::default().fg(Color::Gray)), Span::raw(p.retries.to_string())]),
+                ];
+                frame.render_widget(Paragraph::new(metrics).block(Block::default().borders(Borders::ALL).title(" Network ")), chunks[2]);
+
+                let status = Paragraph::new(vec![
+                    Line::from(vec![Span::styled("Status: ", Style::default().fg(Color::Gray)), Span::styled(p.status.clone(), Style::default().fg(if p.status.contains("pausing") { Color::Yellow } else { Color::Green }).add_modifier(Modifier::BOLD))]),
+                    Line::from("Progress is checkpointed by the download engine; pausing preserves the partial file."),
+                ])
+                .wrap(Wrap { trim: true })
+                .block(Block::default().borders(Borders::ALL).title(" Activity "));
+                frame.render_widget(status, chunks[3]);
+
+                let help = Paragraph::new(" [P] Pause safely    [Esc] Pause and return    Keep this terminal open ")
+                    .style(Style::default().fg(Color::Yellow))
+                    .block(Block::default().borders(Borders::ALL));
+                frame.render_widget(help, chunks[4]);
+            });
+
+            if disconnected {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        pb.finish_and_clear();
     })
 }
 
-fn format_eta(secs: f64) -> String {
+fn format_duration(secs: f64) -> String {
     if !secs.is_finite() || secs < 0.0 {
         return "—".into();
     }
