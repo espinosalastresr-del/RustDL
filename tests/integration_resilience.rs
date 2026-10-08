@@ -86,7 +86,7 @@ fn handle(
         let slice = &body[start..=end];
         write!(
             stream,
-            "HTTP/1.1 206 Partial Content\r\nAccept-Ranges: bytes\r\nETag: "v1"\r\nContent-Range: bytes {}-{}/{}\r\nContent-Length: {}\r\n\r\n",
+            "HTTP/1.1 206 Partial Content\r\nAccept-Ranges: bytes\r\nETag: \"v1\"\r\nContent-Range: bytes {}-{}/{}\r\nContent-Length: {}\r\n\r\n",
             start,
             end,
             body.len(),
