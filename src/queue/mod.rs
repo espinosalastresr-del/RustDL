@@ -2,7 +2,6 @@
 
 use crate::errors::{DownloadError, Result};
 use crate::storage::atomic::atomic_write_string;
-use crate::storage::state::DownloadState;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
