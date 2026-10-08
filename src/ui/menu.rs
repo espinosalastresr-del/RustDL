@@ -34,6 +34,7 @@ pub enum Action {
     Remove(String),
     Info(String),
     QueueAdd { url: String, output: Option<String> },
+    QueueRemove(String),
     QueueStart,
     Verify(PathBuf),
     History,
@@ -46,6 +47,7 @@ enum Screen {
     Dashboard,
     Downloads,
     NewDownload,
+    Queue,
     QueueAdd,
     Verify,
     Settings,
@@ -70,6 +72,7 @@ struct App {
     path: String,
     message: String,
     selected_id: Option<String>,
+    queue_selected: usize,
     settings_selected: usize,
     settings_dirty: bool,
     states: Vec<DownloadState>,
@@ -88,6 +91,7 @@ impl App {
             path: String::new(),
             message: String::new(),
             selected_id: None,
+            queue_selected: 0,
             settings_selected: 0,
             settings_dirty: false,
             states: find_incomplete(&cfg.download_dir)?,
@@ -152,6 +156,7 @@ fn handle_key(app: &mut App, cfg: &mut Config, key: KeyEvent) -> Result<Option<A
     match app.screen {
         Screen::Dashboard => dashboard_key(app, key),
         Screen::Downloads => downloads_key(app, key),
+        Screen::Queue => queue_key(app, key),
         Screen::NewDownload | Screen::QueueAdd => form_key(app, key),
         Screen::Verify => verify_key(app, key),
         Screen::Settings => settings_key(app, cfg, key),
@@ -179,7 +184,8 @@ fn dashboard_key(app: &mut App, key: KeyEvent) -> Result<Option<Action>> {
     match key.code {
         KeyCode::Char('n') => app.reset_form(Screen::NewDownload),
         KeyCode::Char('d') | KeyCode::Enter => app.screen = Screen::Downloads,
-        KeyCode::Char('q') => app.reset_form(Screen::QueueAdd),
+        KeyCode::Char('q') => app.screen = Screen::Queue,
+        KeyCode::Char('a') => app.reset_form(Screen::QueueAdd),
         KeyCode::Char('s') => app.screen = Screen::Settings,
         KeyCode::Char('h') => app.screen = Screen::History,
         KeyCode::Char('v') => {
@@ -200,7 +206,7 @@ fn downloads_key(app: &mut App, key: KeyEvent) -> Result<Option<Action>> {
         KeyCode::Down | KeyCode::Char('j') => app.move_selection(1),
         KeyCode::Esc | KeyCode::Char('b') => app.screen = Screen::Dashboard,
         KeyCode::Char('n') => app.reset_form(Screen::NewDownload),
-        KeyCode::Char('q') => app.reset_form(Screen::QueueAdd),
+        KeyCode::Char('q') => app.screen = Screen::Queue,
         KeyCode::Char('a') => return Ok(Some(Action::ResumeAll)),
         KeyCode::Char('r') | KeyCode::Enter => {
             if let Some(state) = app.selected_state() {
@@ -227,6 +233,35 @@ fn downloads_key(app: &mut App, key: KeyEvent) -> Result<Option<Action>> {
         _ => {}
     }
 
+    Ok(None)
+}
+
+fn queue_key(app: &mut App, key: KeyEvent) -> Result<Option<Action>> {
+    let len = app.queue.items.len();
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.queue_selected = app.queue_selected.saturating_sub(1);
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if len > 0 {
+                app.queue_selected = (app.queue_selected + 1).min(len - 1);
+            }
+        }
+        KeyCode::Esc | KeyCode::Char('b') => app.screen = Screen::Dashboard,
+        KeyCode::Char('a') => app.reset_form(Screen::QueueAdd),
+        KeyCode::Char('s') | KeyCode::Enter => {
+            if len > 0 {
+                return Ok(Some(Action::QueueStart));
+            }
+        }
+        KeyCode::Char('d') => {
+            if let Some(item) = app.queue.items.get(app.queue_selected) {
+                return Ok(Some(Action::QueueRemove(item.id.clone())));
+            }
+        }
+        KeyCode::F(1) | KeyCode::Char('?') => app.screen = Screen::Help,
+        _ => {}
+    }
     Ok(None)
 }
 
@@ -399,6 +434,7 @@ fn render(frame: &mut ratatui::Frame, app: &App, cfg: &Config) {
     match app.screen {
         Screen::Dashboard => render_dashboard(frame, inner, app, cfg),
         Screen::Downloads => render_downloads(frame, inner, app),
+        Screen::Queue => render_queue(frame, inner, app),
         Screen::NewDownload | Screen::QueueAdd => render_form(frame, inner, app, false),
         Screen::Verify => render_form(frame, inner, app, true),
         Screen::Settings => render_settings(frame, inner, app, cfg),
@@ -525,6 +561,51 @@ fn render_downloads(frame: &mut ratatui::Frame, area: Rect, app: &App) {
             " r resume • t retry • d delete • i info • a all • n new • q queue • Esc back",
         )
         .style(Style::default().fg(Color::DarkGray)),
+        Rect::new(
+            area.x + 2,
+            area.y + area.height.saturating_sub(2),
+            area.width.saturating_sub(4),
+            1,
+        ),
+    );
+}
+
+fn render_queue(frame: &mut ratatui::Frame, area: Rect, app: &App) {
+    let rows = app.queue.items.iter().map(|item| {
+        Row::new(vec![
+            Cell::from(item.id.clone()),
+            Cell::from(truncate(&item.url, 42)),
+            Cell::from(format!("{:?}", item.status)),
+        ])
+    });
+
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(8),
+            Constraint::Min(30),
+            Constraint::Length(12),
+        ],
+    )
+    .header(
+        Row::new(vec!["ID", "URL", "STATUS"]).style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+    )
+    .block(Block::default().borders(Borders::ALL).title(" Queue "))
+    .highlight_style(Style::default().bg(Color::DarkGray))
+    .highlight_symbol("› ");
+
+    let mut state = TableState::default();
+    if !app.queue.items.is_empty() {
+        state.select(Some(app.queue_selected.min(app.queue.items.len() - 1)));
+    }
+    frame.render_stateful_widget(table, area, &mut state);
+    frame.render_widget(
+        Paragraph::new(" s/Enter start • a add • d remove • Esc back")
+            .style(Style::default().fg(Color::DarkGray)),
         Rect::new(
             area.x + 2,
             area.y + area.height.saturating_sub(2),
