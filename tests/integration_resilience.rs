@@ -229,8 +229,8 @@ async fn resume_after_partial() {
 
 #[test]
 fn backoff_and_segments_unit() {
-    use rustdl::downloader::retry::Backoff;
     use rustdl::config::RetryConfig;
+    use rustdl::downloader::retry::Backoff;
     use rustdl::downloader::segments::plan_segments;
 
     let cfg = RetryConfig {
