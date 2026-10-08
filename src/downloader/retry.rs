@@ -11,10 +11,7 @@ pub struct Backoff {
 
 impl Backoff {
     pub fn new(config: RetryConfig) -> Self {
-        Self {
-            config,
-            attempt: 0,
-        }
+        Self { config, attempt: 0 }
     }
 
     pub fn reset(&mut self) {
