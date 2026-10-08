@@ -624,6 +624,7 @@ async fn partially_written_multi_segments_resume_with_sha256_integrity() {
         .create(true)
         .write(true)
         .read(true)
+        .truncate(false)
         .open(&part)
         .unwrap();
     use std::io::{Seek, SeekFrom};
