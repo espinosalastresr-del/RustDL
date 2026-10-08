@@ -4,7 +4,7 @@ use crate::config::Config;
 use crate::downloader::range::{parse_content_range, range_header, range_header_segment};
 use crate::downloader::request::build_client;
 use crate::downloader::resume::{decide_resume, remote_changed_error, ResumeDecision};
-use crate::downloader::retry::Backoff;
+use crate::downloader::retry::{parse_retry_after, Backoff};
 use crate::downloader::segments::plan_segments;
 use crate::errors::{DownloadError, Result};
 use crate::metadata::http::{probe, validate_partial, RemoteMeta};
@@ -353,7 +353,7 @@ impl Engine {
                 .headers()
                 .get("retry-after")
                 .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.parse::<u64>().ok());
+                .and_then(parse_retry_after);
 
             if status == 429 || (500..600).contains(&status) || status == 408 || status == 425 {
                 let err = DownloadError::Http {
@@ -390,7 +390,7 @@ impl Engine {
                     .headers()
                     .get(CONTENT_LENGTH)
                     .and_then(|v| v.to_str().ok())
-                    .and_then(|s| s.parse().ok());
+                    .and_then(parse_retry_after);
                 if let Err(e) = validate_partial(status, cr.as_deref(), offset, cl) {
                     error!("Invalid range response — refusing to corrupt partial file");
                     return Err(e);
@@ -734,6 +734,10 @@ impl Engine {
                                     }
                                 }
                                 let n = chunk.len() as u64;
+                                let remaining = seg.end.saturating_sub(seg.start + seg.downloaded) + 1;
+                                if n > remaining {
+                                    return Err(DownloadError::InvalidRange);
+                                }
                                 let write_pos = seg.start + seg.downloaded;
                                 {
                                     let mut f = file.lock().await;
