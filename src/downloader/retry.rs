@@ -1,8 +1,8 @@
 //! Exponential backoff with jitter and Retry-After support.
 
 use crate::config::RetryConfig;
-use rand::Rng;
 use chrono::{DateTime, Utc};
+use rand::Rng;
 use std::time::Duration;
 
 pub struct Backoff {
@@ -57,6 +57,20 @@ impl Backoff {
     }
 }
 
+/// Parse the HTTP Retry-After header.
+///
+/// Supports both the delta-seconds form and the HTTP-date form.
+pub fn parse_retry_after(value: &str) -> Option<u64> {
+    if let Ok(secs) = value.trim().parse::<u64>() {
+        return Some(secs);
+    }
+
+    let when = DateTime::parse_from_rfc2822(value.trim()).ok()?;
+    let now = Utc::now();
+    let delay = (when.with_timezone(&Utc) - now).num_seconds();
+    Some(delay.max(0) as u64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -75,7 +89,6 @@ mod tests {
         assert!(d2 >= d1);
     }
 
-    #[test]
     #[test]
     fn retry_after_parses_delta_seconds() {
         assert_eq!(parse_retry_after("7"), Some(7));
@@ -101,19 +114,4 @@ mod tests {
         assert!(b.next_delay().is_some());
         assert!(b.next_delay().is_none());
     }
-}
-
-
-/// Parse the HTTP Retry-After header.
-///
-/// Supports both the delta-seconds form and the HTTP-date form.
-pub fn parse_retry_after(value: &str) -> Option<u64> {
-    if let Ok(secs) = value.trim().parse::<u64>() {
-        return Some(secs);
-    }
-
-    let when = DateTime::parse_from_rfc2822(value.trim()).ok()?;
-    let now = Utc::now();
-    let delay = (when.with_timezone(&Utc) - now).num_seconds();
-    Some(delay.max(0) as u64)
 }
