@@ -216,6 +216,7 @@ fn prompt(label: &str) -> Result<Option<String>> {
     let mut input = String::new();
     let read = io::stdin()
         .read_line(&mut input)
+        .map_err(DownloadError::Io)?;
     if read == 0 {
         return Ok(None);
     }
